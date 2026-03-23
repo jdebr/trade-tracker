@@ -1,0 +1,19 @@
+name: swing-trader
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - fastapi
+      - "uvicorn[standard]"
+      - pandas
+      - numpy
+      - pandas-ta
+      - apscheduler
+      - supabase
+      - python-dotenv
+      - httpx
+      - yfinance
+      - psycopg2-binary
