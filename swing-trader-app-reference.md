@@ -300,25 +300,31 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 3. ⬜ Implement OHLCV fetching + caching layer
+### 3. ✅ Implement OHLCV fetching + caching layer
 
 **Subtasks**
-- [ ] Twelve Data client: fetch daily OHLCV for a list of symbols
-- [ ] yfinance fallback: same interface, used when Twelve Data quota is exhausted
-- [ ] Cache check: query `ohlcv_cache` before fetching — only fetch if date is stale
-- [ ] Upsert fetched data into `ohlcv_cache`
-- [ ] Bulk fetch endpoint for screener (up to ~500 tickers with cache)
+- [x] Twelve Data client: fetch daily OHLCV for a list of symbols
+- [x] yfinance fallback: same interface, used when Twelve Data quota is exhausted
+- [x] Cache check: query `ohlcv_cache` before fetching — only fetch if date is stale
+- [x] Upsert fetched data into `ohlcv_cache`
+- [x] Bulk fetch endpoint for screener (up to ~500 tickers with cache)
 
 **Testing criteria**
-- Fetching a fresh ticker populates `ohlcv_cache`
-- Re-fetching same ticker same day hits cache, makes zero API calls
-- yfinance fallback activates correctly when Twelve Data returns a rate limit error
+- [x] Fetching a fresh ticker populates `ohlcv_cache`
+- [x] Re-fetching same ticker same day hits cache, makes zero API calls
+- [x] yfinance fallback activates correctly when Twelve Data returns a rate limit error
 
 **Technical notes**
 - Twelve Data free tier: 800 requests/day — protect with a daily counter or check response headers
 - yfinance is unofficial and rate-limited; use for fallback only, not primary
 - Store `source` column (`twelve_data` or `yfinance`) on every row for debugging
 - Screener should batch-check cache freshness before deciding which tickers to fetch
+- `volume` column is `bigint` in Supabase — cast to `int` before upserting (not `float`)
+- Cache freshness threshold: 1 trading day (today or yesterday) — covers case where today's close hasn't happened yet
+- `is_cache_fresh` rolls back to the most recent weekday, so weekend runs don't mark Friday data as stale
+- Bulk fetch endpoint: `POST /ohlcv/fetch` — accepts `{"symbols": [...], "lookback_days": 100}`; returns `fetched/cached/failed` lists and `bars_upserted` count
+- `get_cached_bars(symbol)` returns bars oldest→newest (ready for pandas/TA consumption)
+- Run tests: `conda run -n swing-trader python -m pytest backend/tests/test_ohlcv.py -v`
 
 ---
 
