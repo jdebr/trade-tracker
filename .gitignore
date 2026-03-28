@@ -32,6 +32,9 @@ frontend/.vite/
 .DS_Store
 Thumbs.db
 
+# Supabase
+supabase/.temp/
+
 # Logs
 *.log
 npm-debug.log*
