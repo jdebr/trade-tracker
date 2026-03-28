@@ -274,26 +274,29 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 2. ⬜ Stand up FastAPI backend with Supabase connection
+### 2. ✅ Stand up FastAPI backend with Supabase connection
 
 **Subtasks**
-- [ ] Scaffold `backend/` structure (`app/`, `routers/`, `services/`, `models/`)
-- [ ] Create conda environment (`swing-trader`, Python 3.12)
-- [ ] Install core dependencies: `fastapi`, `uvicorn`, `supabase`, `python-dotenv`
-- [ ] Wire `.env` → Supabase client singleton
-- [ ] Implement health check endpoint (`GET /health`)
-- [ ] Implement basic CRUD endpoints for watchlist
+- [x] Scaffold `backend/` structure (`app/`, `routers/`, `services/`, `models/`)
+- [x] Create conda environment (`swing-trader`, Python 3.12)
+- [x] Install core dependencies: `fastapi`, `uvicorn`, `supabase`, `python-dotenv`
+- [x] Wire `.env` → Supabase client singleton
+- [x] Implement health check endpoint (`GET /health`)
+- [x] Implement basic CRUD endpoints for watchlist
 
 **Testing criteria**
-- `GET /health` returns `200 OK` with Supabase connectivity confirmed
-- Can add/remove a ticker from watchlist via API and verify in Supabase dashboard
-- Server starts cleanly with `uvicorn app.main:app --reload`
+- [x] `GET /health` returns `200 OK` with Supabase connectivity confirmed
+- [x] Can add/remove a ticker from watchlist via API and verify in Supabase dashboard
+- [x] Server starts cleanly with `uvicorn app.main:app --reload`
 
 **Technical notes**
 - Conda env name: `swing-trader` (Python 3.12)
 - Use `supabase-py` client with `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (service role bypasses RLS for backend operations)
 - `.env` lives at repo root; loaded via `python-dotenv` in `backend/app/config.py`
 - `environment.yml` at `backend/environment.yml` for reproducible env setup
+- `watchlist.symbol` has a FK to `tickers.symbol` — a ticker must exist in `tickers` before it can be added to the watchlist. This is intentional; the screener populates `tickers` from the S&P 500 universe (milestone 5)
+- Start dev server: `conda activate swing-trader && cd backend && uvicorn app.main:app --reload`
+- Interactive API docs available at `http://localhost:8000/docs` when server is running
 
 ---
 
