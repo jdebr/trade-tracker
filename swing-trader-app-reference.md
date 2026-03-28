@@ -252,16 +252,196 @@ Well within budget. Room to upgrade Twelve Data to a paid plan (~$29/mo) if real
 
 ---
 
-## Next Steps
+## Dev Work Tracker
 
-Suggested order of development:
+Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
-1. [ ] Finalize data model (tickers, OHLCV cache, indicator snapshots, alerts)
-2. [ ] Stand up FastAPI backend with Supabase connection
-3. [ ] Implement OHLCV fetching + caching layer (Twelve Data + yfinance)
-4. [ ] Build `pandas-ta` indicator engine (Tier 1 indicators)
-5. [ ] Implement two-pass screener (S&P 500 universe, BB squeeze focus)
-6. [ ] Build React frontend — watchlist + scanner table + chart view
-7. [ ] Wire up APScheduler for daily 4PM ET scan
-8. [ ] Add screener on-demand trigger from dashboard
-9. [ ] Harden, tune alert conditions, deploy
+---
+
+### 1. ✅ Finalize data model
+
+**Subtasks**
+- [x] Design schema (tables, columns, indexes)
+- [x] Apply schema to Supabase dev project
+
+**Technical notes**
+- 7 tables: `tickers`, `watchlist`, `ohlcv_cache`, `indicator_snapshots`, `screener_results`, `alerts`, `trade_log`
+- Supabase project: `awthrbddawoqqeyidbbz` (region: us-east-1)
+- Schema source of truth: `supabase/schema.sql` — re-run in SQL editor to reset, or extend with new `ALTER TABLE` statements
+- `ohlcv_cache` and `indicator_snapshots` use `UNIQUE(symbol, date)` — use upsert (INSERT ... ON CONFLICT DO UPDATE) from the backend
+- `alerts.details` is JSONB — store the raw indicator values that triggered the alert for auditability
+- `trade_log` links back to `alerts.id` and `screener_results.id` via nullable FKs
+
+---
+
+### 2. ⬜ Stand up FastAPI backend with Supabase connection
+
+**Subtasks**
+- [ ] Scaffold `backend/` structure (`app/`, `routers/`, `services/`, `models/`)
+- [ ] Create conda environment (`swing-trader`, Python 3.12)
+- [ ] Install core dependencies: `fastapi`, `uvicorn`, `supabase`, `python-dotenv`
+- [ ] Wire `.env` → Supabase client singleton
+- [ ] Implement health check endpoint (`GET /health`)
+- [ ] Implement basic CRUD endpoints for watchlist
+
+**Testing criteria**
+- `GET /health` returns `200 OK` with Supabase connectivity confirmed
+- Can add/remove a ticker from watchlist via API and verify in Supabase dashboard
+- Server starts cleanly with `uvicorn app.main:app --reload`
+
+**Technical notes**
+- Conda env name: `swing-trader` (Python 3.12)
+- Use `supabase-py` client with `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (service role bypasses RLS for backend operations)
+- `.env` lives at repo root; loaded via `python-dotenv` in `backend/app/config.py`
+- `environment.yml` at `backend/environment.yml` for reproducible env setup
+
+---
+
+### 3. ⬜ Implement OHLCV fetching + caching layer
+
+**Subtasks**
+- [ ] Twelve Data client: fetch daily OHLCV for a list of symbols
+- [ ] yfinance fallback: same interface, used when Twelve Data quota is exhausted
+- [ ] Cache check: query `ohlcv_cache` before fetching — only fetch if date is stale
+- [ ] Upsert fetched data into `ohlcv_cache`
+- [ ] Bulk fetch endpoint for screener (up to ~500 tickers with cache)
+
+**Testing criteria**
+- Fetching a fresh ticker populates `ohlcv_cache`
+- Re-fetching same ticker same day hits cache, makes zero API calls
+- yfinance fallback activates correctly when Twelve Data returns a rate limit error
+
+**Technical notes**
+- Twelve Data free tier: 800 requests/day — protect with a daily counter or check response headers
+- yfinance is unofficial and rate-limited; use for fallback only, not primary
+- Store `source` column (`twelve_data` or `yfinance`) on every row for debugging
+- Screener should batch-check cache freshness before deciding which tickers to fetch
+
+---
+
+### 4. ⬜ Build indicator engine (Tier 1)
+
+**Subtasks**
+- [ ] Load OHLCV from `ohlcv_cache` into a pandas DataFrame
+- [ ] Compute RSI (14), MACD (12/26/9), Bollinger Bands (20/2), EMA ribbon (8/21/50) via `pandas-ta`
+- [ ] Compute `bb_width` and `bb_squeeze` flag (lowest 20th percentile of rolling bb_width)
+- [ ] Upsert results into `indicator_snapshots`
+- [ ] Add ATR (14) and OBV at the same time (Tier 2 but trivial to include)
+
+**Testing criteria**
+- Indicator values for a known ticker/date match a reference (e.g. cross-check against TradingView)
+- `bb_squeeze = true` fires correctly on a ticker known to be in a squeeze
+- Upsert is idempotent — running twice doesn't duplicate rows
+
+**Technical notes**
+- `pandas-ta` appends columns directly to a DataFrame — just call `df.ta.rsi()`, `df.ta.macd()`, etc.
+- Need at least 50 trading days of OHLCV history to compute EMA-50 reliably; fetch 100 days on first load
+- `bb_squeeze` threshold: compute `bb_width` percentile over rolling 252-day window (1 trading year)
+
+---
+
+### 5. ⬜ Implement two-pass screener
+
+**Subtasks**
+- [ ] Load S&P 500 constituent list (static CSV, refresh monthly)
+- [ ] Pass 1: filter by avg volume > 1M, price $15–$500, exclude ETFs
+- [ ] Pass 2: apply BB squeeze + RSI range + EMA trend + volume expansion filters
+- [ ] Score each survivor (0–4) and rank by score descending
+- [ ] Write results to `screener_results` with `run_at` timestamp
+- [ ] Expose `POST /screener/run` endpoint (triggers on-demand run, returns ranked list)
+
+**Testing criteria**
+- Pass 1 reduces ~500 tickers to ~150–200
+- Pass 2 produces a ranked list of 10–20 candidates
+- Results are persisted in `screener_results` and retrievable via `GET /screener/results`
+- Runs complete in under 2 minutes (with warm cache)
+
+**Technical notes**
+- S&P 500 CSV source: Wikipedia table via pandas `read_html` or a static file in `backend/data/sp500.csv`
+- Pass 1 uses pre-loaded ticker metadata from `tickers` table (no API calls)
+- Pass 2 reads from `indicator_snapshots` cache first; only fetches/computes missing tickers
+- `signal_score` = sum of: `bb_squeeze`, `rsi_in_range`, `above_ema50`, `volume_expansion` (each bool)
+
+---
+
+### 6. ⬜ Build React frontend (MVP)
+
+**Subtasks**
+- [ ] Set up React Router, global layout, nav
+- [ ] Watchlist manager: add/remove tickers, group assignment
+- [ ] Scanner view: table of watchlist tickers with live indicator values, color-coded status
+- [ ] Screener view: trigger run button, ranked results table
+- [ ] Chart view: TradingView Lightweight Charts with candlesticks + BB + EMA overlays
+- [ ] Alert display: list of unacknowledged alerts with condition detail
+
+**Testing criteria**
+- Can add/remove tickers from watchlist and see changes persist
+- Scanner table renders all indicator columns and updates on page load
+- Screener run triggers backend call and displays ranked results
+- Chart loads for any watchlist ticker and renders correctly
+
+**Technical notes**
+- Frontend stack: React + Vite, scaffolded in `frontend/`
+- Will deploy to Vercel (free tier) — configure `VITE_API_URL` env var pointing at backend
+- Use `@supabase/supabase-js` on the frontend with the `anon` key (read-only, public data only)
+- Sensitive ops (screener run, writes) go through the FastAPI backend, not direct Supabase calls from frontend
+- TradingView Lightweight Charts: `npm install lightweight-charts`
+
+---
+
+### 7. ⬜ Wire up APScheduler (daily scan)
+
+**Subtasks**
+- [ ] Add APScheduler to FastAPI app startup
+- [ ] Schedule watchlist scan job at 4:00 PM ET daily (Mon–Fri)
+- [ ] Job: fetch OHLCV → compute indicators → evaluate alert conditions → write to `alerts`
+- [ ] Skip job on market holidays (use `pandas_market_calendars` or a static holiday list)
+
+**Testing criteria**
+- Scheduler starts with the app and logs next run time on startup
+- Manual trigger of the job function populates `alerts` correctly
+- Job skips correctly on a known market holiday
+
+**Technical notes**
+- Use `APScheduler` with `AsyncIOScheduler` (compatible with FastAPI's async event loop)
+- Timezone: `America/New_York` — set explicitly on the cron trigger
+- Job should be idempotent: re-running on the same day upserts, doesn't duplicate alerts
+
+---
+
+### 8. ⬜ Add screener on-demand trigger from dashboard
+
+**Subtasks**
+- [ ] "Run Screener" button in frontend hits `POST /screener/run`
+- [ ] Show progress indicator while running (can take 30–90 seconds with cold cache)
+- [ ] Display results immediately on completion without page reload
+
+**Testing criteria**
+- Button triggers run, shows loading state, then renders results
+- Works end-to-end from deployed frontend → backend → Supabase
+
+**Technical notes**
+- Consider using a background task (`BackgroundTasks` in FastAPI) so the endpoint returns immediately with a job ID, then poll for completion
+- This is particularly important once deployed, where request timeouts may be an issue
+
+---
+
+### 9. ⬜ Harden, tune, and deploy
+
+**Subtasks**
+- [ ] Choose hosting: Render.com starter ($7/mo) vs AWS EC2 t3.micro (~$8/mo)
+- [ ] Set up environment variables on host
+- [ ] Configure Vercel deployment for frontend (`VITE_API_URL` → backend URL)
+- [ ] Add CORS config to FastAPI (allow Vercel domain)
+- [ ] Tune alert conditions against a few weeks of real data
+- [ ] Set up basic error logging (stdout → host log viewer is sufficient)
+
+**Testing criteria**
+- Frontend loads from Vercel URL and connects to deployed backend
+- Daily scheduler fires at 4PM ET and produces alerts
+- No credentials in git history or deployed environment
+
+**Technical notes**
+- Render.com is simpler to deploy than EC2 for a personal project — recommended first choice
+- Backend deploy: push to GitHub → Render auto-deploys from `main` branch
+- CORS: allow `https://<your-vercel-app>.vercel.app` and `http://localhost:5173` (dev)
