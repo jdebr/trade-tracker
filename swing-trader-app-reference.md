@@ -328,24 +328,29 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 4. ⬜ Build indicator engine (Tier 1)
+### 4. ✅ Build indicator engine (Tier 1)
 
 **Subtasks**
-- [ ] Load OHLCV from `ohlcv_cache` into a pandas DataFrame
-- [ ] Compute RSI (14), MACD (12/26/9), Bollinger Bands (20/2), EMA ribbon (8/21/50) via `pandas-ta`
-- [ ] Compute `bb_width` and `bb_squeeze` flag (lowest 20th percentile of rolling bb_width)
-- [ ] Upsert results into `indicator_snapshots`
-- [ ] Add ATR (14) and OBV at the same time (Tier 2 but trivial to include)
+- [x] Load OHLCV from `ohlcv_cache` into a pandas DataFrame
+- [x] Compute RSI (14), MACD (12/26/9), Bollinger Bands (20/2), EMA ribbon (8/21/50) via `pandas-ta`
+- [x] Compute `bb_width` and `bb_squeeze` flag (lowest 20th percentile of rolling bb_width)
+- [x] Upsert results into `indicator_snapshots`
+- [x] Add ATR (14) and OBV at the same time (Tier 2 but trivial to include)
 
 **Testing criteria**
-- Indicator values for a known ticker/date match a reference (e.g. cross-check against TradingView)
-- `bb_squeeze = true` fires correctly on a ticker known to be in a squeeze
-- Upsert is idempotent — running twice doesn't duplicate rows
+- [x] Indicator values for a known ticker/date match a reference (e.g. cross-check against TradingView)
+- [x] `bb_squeeze = true` fires correctly on a ticker known to be in a squeeze
+- [x] Upsert is idempotent — running twice doesn't duplicate rows
 
 **Technical notes**
 - `pandas-ta` appends columns directly to a DataFrame — just call `df.ta.rsi()`, `df.ta.macd()`, etc.
 - Need at least 50 trading days of OHLCV history to compute EMA-50 reliably; fetch 100 days on first load
-- `bb_squeeze` threshold: compute `bb_width` percentile over rolling 252-day window (1 trading year)
+- `bb_squeeze` threshold: `rolling(252).quantile(0.20)` — fires when current `bb_width` ≤ 20th percentile of last 252 bars
+- `bb_width = (bb_upper - bb_lower) / bb_middle` (normalized bandwidth, not raw width)
+- `pandas-ta` column names are dynamic (e.g. `BBU_20_2.0`, `MACD_12_26_9`) — resolve by prefix in `compute_indicators()`
+- Minimum 60 bars required; returns `None` if insufficient history (caller adds symbol to `skipped` list)
+- `POST /indicators/compute` — accepts `{"symbols": [...]}`, returns `computed/skipped/failed` lists and `rows_upserted`
+- Run tests: `conda run -n swing-trader python -m pytest backend/tests/test_indicators.py -v`
 
 ---
 
