@@ -354,27 +354,31 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 5. ⬜ Implement two-pass screener
+### 5. ✅ Implement two-pass screener
 
 **Subtasks**
-- [ ] Load S&P 500 constituent list (static CSV, refresh monthly)
-- [ ] Pass 1: filter by avg volume > 1M, price $15–$500, exclude ETFs
-- [ ] Pass 2: apply BB squeeze + RSI range + EMA trend + volume expansion filters
-- [ ] Score each survivor (0–4) and rank by score descending
-- [ ] Write results to `screener_results` with `run_at` timestamp
-- [ ] Expose `POST /screener/run` endpoint (triggers on-demand run, returns ranked list)
+- [x] Load S&P 500 constituent list (static CSV, refresh monthly)
+- [x] Pass 1: filter by avg volume > 1M, price $15–$500, exclude ETFs
+- [x] Pass 2: apply BB squeeze + RSI range + EMA trend + volume expansion filters
+- [x] Score each survivor (0–4) and rank by score descending
+- [x] Write results to `screener_results` with `run_at` timestamp
+- [x] Expose `POST /screener/run` endpoint (triggers on-demand run, returns ranked list)
 
 **Testing criteria**
-- Pass 1 reduces ~500 tickers to ~150–200
-- Pass 2 produces a ranked list of 10–20 candidates
-- Results are persisted in `screener_results` and retrievable via `GET /screener/results`
-- Runs complete in under 2 minutes (with warm cache)
+- [x] Pass 1 reduces ~500 tickers to ~150–200
+- [x] Pass 2 produces a ranked list of 10–20 candidates
+- [x] Results are persisted in `screener_results` and retrievable via `GET /screener/results`
+- [x] Runs complete in under 2 minutes (with warm cache)
 
 **Technical notes**
-- S&P 500 CSV source: Wikipedia table via pandas `read_html` or a static file in `backend/data/sp500.csv`
-- Pass 1 uses pre-loaded ticker metadata from `tickers` table (no API calls)
-- Pass 2 reads from `indicator_snapshots` cache first; only fetches/computes missing tickers
-- `signal_score` = sum of: `bb_squeeze`, `rsi_in_range`, `above_ema50`, `volume_expansion` (each bool)
+- S&P 500 primary source: Wikipedia (`pandas.read_html`) — falls back to `backend/data/sp500.csv` (99 symbols bundled)
+- `sync_universe()` upserts into `tickers`; `update_ticker_metadata()` derives `avg_volume` + `last_price` from `ohlcv_cache` and updates `tickers` — must be called before running screener on a fresh database
+- Pass 1 uses `tickers` table columns: `is_etf=False`, `avg_volume > 1M`, `15 ≤ last_price ≤ 500`; symbols with NULL metadata are excluded
+- Pass 2: `bb_squeeze` + `rsi_in_range` from `indicator_snapshots`; `above_ema50` from comparing close (ohlcv_cache) to ema_50; `volume_expansion` from avg(last 3d vol) > avg(last 20d vol) in ohlcv_cache
+- `signal_score` = sum of: `bb_squeeze`, `rsi_in_range`, `above_ema50`, `volume_expansion` (each bool, max 4)
+- `GET /screener/results` — without params returns most recent run; pass `?run_at=<ISO>` for a historical run
+- Wikipedia symbol dots replaced with dashes (BRK.B → BRK-B) for yfinance compatibility
+- Run tests: `conda run -n swing-trader python -m pytest backend/tests/test_screener.py -v`
 
 ---
 

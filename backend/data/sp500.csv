@@ -1,0 +1,100 @@
+symbol,name,sector,is_etf
+AAPL,Apple Inc.,Information Technology,false
+MSFT,Microsoft Corporation,Information Technology,false
+AMZN,Amazon.com Inc.,Consumer Discretionary,false
+NVDA,NVIDIA Corporation,Information Technology,false
+GOOGL,Alphabet Inc. Class A,Communication Services,false
+GOOG,Alphabet Inc. Class C,Communication Services,false
+META,Meta Platforms Inc.,Communication Services,false
+BRK.B,Berkshire Hathaway Inc. Class B,Financials,false
+LLY,Eli Lilly and Company,Health Care,false
+JPM,JPMorgan Chase & Co.,Financials,false
+V,Visa Inc.,Financials,false
+XOM,Exxon Mobil Corporation,Energy,false
+UNH,UnitedHealth Group Incorporated,Health Care,false
+TSLA,Tesla Inc.,Consumer Discretionary,false
+MA,Mastercard Incorporated,Financials,false
+JNJ,Johnson & Johnson,Health Care,false
+AVGO,Broadcom Inc.,Information Technology,false
+PG,Procter & Gamble Co.,Consumer Staples,false
+HD,Home Depot Inc.,Consumer Discretionary,false
+MRK,Merck & Co. Inc.,Health Care,false
+COST,Costco Wholesale Corporation,Consumer Staples,false
+ABBV,AbbVie Inc.,Health Care,false
+CRM,Salesforce Inc.,Information Technology,false
+CVX,Chevron Corporation,Energy,false
+ORCL,Oracle Corporation,Information Technology,false
+ACN,Accenture plc,Information Technology,false
+MCD,McDonald's Corporation,Consumer Discretionary,false
+BAC,Bank of America Corporation,Financials,false
+NFLX,Netflix Inc.,Communication Services,false
+TMO,Thermo Fisher Scientific Inc.,Health Care,false
+LIN,Linde plc,Materials,false
+AMD,Advanced Micro Devices Inc.,Information Technology,false
+ADBE,Adobe Inc.,Information Technology,false
+CSCO,Cisco Systems Inc.,Information Technology,false
+ABT,Abbott Laboratories,Health Care,false
+DIS,Walt Disney Co.,Communication Services,false
+PEP,PepsiCo Inc.,Consumer Staples,false
+KO,Coca-Cola Co.,Consumer Staples,false
+NEE,NextEra Energy Inc.,Utilities,false
+TXN,Texas Instruments Incorporated,Information Technology,false
+WMT,Walmart Inc.,Consumer Staples,false
+PFE,Pfizer Inc.,Health Care,false
+AMGN,Amgen Inc.,Health Care,false
+RTX,RTX Corporation,Industrials,false
+HON,Honeywell International Inc.,Industrials,false
+COP,ConocoPhillips,Energy,false
+SPGI,S&P Global Inc.,Financials,false
+UNP,Union Pacific Corporation,Industrials,false
+INTU,Intuit Inc.,Information Technology,false
+AXP,American Express Company,Financials,false
+CAT,Caterpillar Inc.,Industrials,false
+GS,Goldman Sachs Group Inc.,Financials,false
+BLK,BlackRock Inc.,Financials,false
+ISRG,Intuitive Surgical Inc.,Health Care,false
+SBUX,Starbucks Corporation,Consumer Discretionary,false
+GE,GE Aerospace,Industrials,false
+MDLZ,Mondelez International Inc.,Consumer Staples,false
+ADI,Analog Devices Inc.,Information Technology,false
+REGN,Regeneron Pharmaceuticals Inc.,Health Care,false
+DE,Deere & Company,Industrials,false
+MS,Morgan Stanley,Financials,false
+GILD,Gilead Sciences Inc.,Health Care,false
+MMC,Marsh & McLennan Companies Inc.,Financials,false
+TJX,TJX Companies Inc.,Consumer Discretionary,false
+SYK,Stryker Corporation,Health Care,false
+CI,The Cigna Group,Health Care,false
+VRTX,Vertex Pharmaceuticals Incorporated,Health Care,false
+BSX,Boston Scientific Corporation,Health Care,false
+ADP,Automatic Data Processing Inc.,Industrials,false
+SCHW,Charles Schwab Corporation,Financials,false
+CB,Chubb Limited,Financials,false
+LRCX,Lam Research Corporation,Information Technology,false
+SO,Southern Company,Utilities,false
+MO,Altria Group Inc.,Consumer Staples,false
+ZTS,Zoetis Inc.,Health Care,false
+EOG,EOG Resources Inc.,Energy,false
+PLD,Prologis Inc.,Real Estate,false
+CME,CME Group Inc.,Financials,false
+AON,Aon plc,Financials,false
+DUK,Duke Energy Corporation,Utilities,false
+SLB,Schlumberger Limited,Energy,false
+ITW,Illinois Tool Works Inc.,Industrials,false
+NOC,Northrop Grumman Corporation,Industrials,false
+WM,Waste Management Inc.,Industrials,false
+MCO,Moody's Corporation,Financials,false
+MMM,3M Company,Industrials,false
+USB,U.S. Bancorp,Financials,false
+PNC,PNC Financial Services Group Inc.,Financials,false
+EMR,Emerson Electric Co.,Industrials,false
+APD,Air Products and Chemicals Inc.,Materials,false
+TGT,Target Corporation,Consumer Discretionary,false
+NSC,Norfolk Southern Corporation,Industrials,false
+FDX,FedEx Corporation,Industrials,false
+MPC,Marathon Petroleum Corporation,Energy,false
+PSX,Phillips 66,Energy,false
+VLO,Valero Energy Corporation,Energy,false
+OXY,Occidental Petroleum Corporation,Energy,false
+HCA,HCA Healthcare Inc.,Health Care,false
+ELV,Elevance Health Inc.,Health Care,false
