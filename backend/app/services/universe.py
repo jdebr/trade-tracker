@@ -43,6 +43,7 @@ def load_sp500_symbols() -> list[dict]:
         df["is_etf"] = False
         result = df[["symbol", "name", "sector", "is_etf"]].to_dict(orient="records")
         logger.info("Loaded %d symbols from Wikipedia", len(result))
+        _refresh_static_csv(df[["symbol", "name", "sector", "is_etf"]])
         return result
     except Exception as exc:
         logger.warning("Wikipedia fetch failed (%s) — using static CSV", exc)
@@ -52,6 +53,15 @@ def load_sp500_symbols() -> list[dict]:
     result = df[["symbol", "name", "sector", "is_etf"]].to_dict(orient="records")
     logger.info("Loaded %d symbols from static CSV", len(result))
     return result
+
+
+def _refresh_static_csv(df: pd.DataFrame) -> None:
+    """Overwrite the bundled CSV with the latest Wikipedia data."""
+    try:
+        df.to_csv(_STATIC_CSV, index=False)
+        logger.info("Refreshed static CSV fallback (%d symbols)", len(df))
+    except Exception as exc:
+        logger.warning("Could not refresh static CSV: %s", exc)
 
 
 def sync_universe() -> int:
