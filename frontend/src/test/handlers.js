@@ -32,6 +32,12 @@ export const MOCK_RUN_RESPONSE = {
   candidates: MOCK_SCREENER_RESULTS,
 }
 
+export const MOCK_WATCHLIST = [
+  { id: "1", symbol: "AAPL", group_name: "Tech",  added_at: "2026-03-01T00:00:00Z" },
+  { id: "2", symbol: "MSFT", group_name: "Tech",  added_at: "2026-03-02T00:00:00Z" },
+  { id: "3", symbol: "JPM",  group_name: "Banks", added_at: "2026-03-03T00:00:00Z" },
+]
+
 export const handlers = [
   http.get(`${API_URL}/health`, () =>
     HttpResponse.json({ status: "ok" })
@@ -46,6 +52,18 @@ export const handlers = [
   ),
 
   http.get(`${API_URL}/watchlist`, () =>
-    HttpResponse.json([])
+    HttpResponse.json(MOCK_WATCHLIST)
+  ),
+
+  http.post(`${API_URL}/watchlist`, async ({ request }) => {
+    const body = await request.json()
+    return HttpResponse.json(
+      { id: "99", symbol: body.symbol.toUpperCase(), group_name: body.group_name ?? null, added_at: new Date().toISOString() },
+      { status: 201 }
+    )
+  }),
+
+  http.delete(`${API_URL}/watchlist/:symbol`, () =>
+    new HttpResponse(null, { status: 204 })
   ),
 ]
