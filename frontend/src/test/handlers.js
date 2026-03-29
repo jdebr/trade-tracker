@@ -32,6 +32,30 @@ export const MOCK_RUN_RESPONSE = {
   candidates: MOCK_SCREENER_RESULTS,
 }
 
+export const MOCK_ALERTS = [
+  {
+    id: "alert-1", symbol: "AAPL", date: "2026-03-28",
+    alert_type: "bb_squeeze", signal_score: 4,
+    price_at_trigger: 213.49, acknowledged: false,
+    triggered_at: "2026-03-28T20:00:00Z",
+    details: { bb_squeeze: true, rsi_in_range: true, above_ema50: true, vol_expansion: true },
+  },
+  {
+    id: "alert-2", symbol: "MSFT", date: "2026-03-28",
+    alert_type: "rsi_oversold", signal_score: 2,
+    price_at_trigger: 388.20, acknowledged: false,
+    triggered_at: "2026-03-28T20:01:00Z",
+    details: { rsi_14: 28.4, bb_squeeze: false },
+  },
+  {
+    id: "alert-3", symbol: "NVDA", date: "2026-03-27",
+    alert_type: "macd_crossover", signal_score: null,
+    price_at_trigger: 118.75, acknowledged: false,
+    triggered_at: "2026-03-27T20:00:00Z",
+    details: { macd_hist: 0.32 },
+  },
+]
+
 // Generate 30 synthetic OHLCV bars ending today
 function makeBars(n = 30) {
   const bars = []
@@ -94,6 +118,18 @@ export const handlers = [
 
   http.get(`${API_URL}/indicators/snapshots`, () =>
     HttpResponse.json(MOCK_SNAPSHOTS)
+  ),
+
+  http.get(`${API_URL}/alerts`, () =>
+    HttpResponse.json(MOCK_ALERTS)
+  ),
+
+  http.patch(`${API_URL}/alerts/:id/acknowledge`, ({ params }) =>
+    HttpResponse.json({ id: params.id, acknowledged: true })
+  ),
+
+  http.post(`${API_URL}/alerts/acknowledge-all`, () =>
+    HttpResponse.json({ acknowledged_count: MOCK_ALERTS.length })
   ),
 
   http.get(`${API_URL}/ohlcv/bars`, () =>

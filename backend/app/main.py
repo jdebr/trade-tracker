@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import ENVIRONMENT
-from app.routers import health, watchlist, ohlcv, indicators, screener
+from app.routers import health, watchlist, ohlcv, indicators, screener, alerts
 
 app = FastAPI(title="Trade Tracker API", version="0.1.0")
 
@@ -18,3 +18,4 @@ app.include_router(watchlist.router)
 app.include_router(ohlcv.router)
 app.include_router(indicators.router)
 app.include_router(screener.router)
+app.include_router(alerts.router)
