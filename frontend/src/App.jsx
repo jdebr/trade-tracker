@@ -1,121 +1,70 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom"
+import { Button } from "@/components/ui/button"
 
-function App() {
-  const [count, setCount] = useState(0)
-
+function ScreenerPage() {
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    <main className="p-6">
+      <h1 className="text-2xl font-semibold mb-4">Screener</h1>
+      <Button>Run Screener</Button>
+    </main>
   )
 }
 
-export default App
+function WatchlistPage() {
+  return (
+    <main className="p-6">
+      <h1 className="text-2xl font-semibold mb-4">Watchlist</h1>
+      <p className="text-muted-foreground">Your watchlist will appear here.</p>
+    </main>
+  )
+}
+
+function NotFoundPage() {
+  return (
+    <main className="p-6">
+      <h1 className="text-2xl font-semibold">404 — Page not found</h1>
+    </main>
+  )
+}
+
+const NAV_LINKS = [
+  { to: "/",         label: "Screener" },
+  { to: "/watchlist", label: "Watchlist" },
+]
+
+function Nav() {
+  return (
+    <nav className="flex gap-4 px-6 py-3 border-b border-border bg-card">
+      <span className="font-bold text-primary mr-4">SwingTrader</span>
+      {NAV_LINKS.map(({ to, label }) => (
+        <NavLink
+          key={to}
+          to={to}
+          end
+          className={({ isActive }) =>
+            isActive
+              ? "text-sm font-medium text-primary"
+              : "text-sm font-medium text-muted-foreground hover:text-foreground"
+          }
+        >
+          {label}
+        </NavLink>
+      ))}
+    </nav>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <div className="min-h-screen bg-background text-foreground">
+        <Nav />
+        <Routes>
+          <Route path="/"          element={<ScreenerPage />} />
+          <Route path="/watchlist" element={<WatchlistPage />} />
+          <Route path="*"          element={<NotFoundPage />} />
+        </Routes>
+      </div>
+    </BrowserRouter>
+  )
+}
