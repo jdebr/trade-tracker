@@ -29,17 +29,28 @@ function withProviders(ui, { route = "/" } = {}) {
   )
 }
 
+function renderApp() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={qc}>
+      <App />
+    </QueryClientProvider>
+  )
+}
+
 // 1. App renders without crashing
 it("renders App without crashing", () => {
-  render(<App />)
+  renderApp()
   expect(document.body).toBeTruthy()
 })
 
 // 2 & 3. React Router routes
 describe("React Router routes", () => {
-  it("renders Screener page at /", () => {
-    render(<App />)
-    expect(screen.getByRole("heading", { name: /screener/i })).toBeInTheDocument()
+  it("renders Screener page at /", async () => {
+    renderApp()
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /screener/i })).toBeInTheDocument()
+    )
   })
 })
 
