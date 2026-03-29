@@ -32,6 +32,28 @@ export const MOCK_RUN_RESPONSE = {
   candidates: MOCK_SCREENER_RESULTS,
 }
 
+// Generate 30 synthetic OHLCV bars ending today
+function makeBars(n = 30) {
+  const bars = []
+  const now = new Date()
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now)
+    d.setDate(d.getDate() - i)
+    const dateStr = d.toISOString().slice(0, 10)
+    const close = 200 + Math.sin(i / 5) * 10
+    bars.push({ symbol: "AAPL", date: dateStr, open: close - 1, high: close + 2, low: close - 2, close, volume: 1_000_000, source: "yfinance" })
+  }
+  return bars
+}
+
+export const MOCK_BARS = makeBars(30)
+
+export const MOCK_INDICATOR_HISTORY = MOCK_BARS.map((b) => ({
+  symbol: "AAPL", date: b.date,
+  bb_upper: b.close + 5, bb_middle: b.close, bb_lower: b.close - 5,
+  ema_8: b.close + 1, ema_21: b.close + 0.5, ema_50: b.close - 1,
+}))
+
 export const MOCK_SNAPSHOTS = [
   {
     symbol: "AAPL", date: "2026-03-28",
@@ -72,6 +94,14 @@ export const handlers = [
 
   http.get(`${API_URL}/indicators/snapshots`, () =>
     HttpResponse.json(MOCK_SNAPSHOTS)
+  ),
+
+  http.get(`${API_URL}/ohlcv/bars`, () =>
+    HttpResponse.json(MOCK_BARS)
+  ),
+
+  http.get(`${API_URL}/indicators/history`, () =>
+    HttpResponse.json(MOCK_INDICATOR_HISTORY)
   ),
 
   http.post(`${API_URL}/watchlist`, async ({ request }) => {

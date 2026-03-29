@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query
 from typing import Optional
 from app.models.indicators import IndicatorComputeRequest, IndicatorComputeResponse, IndicatorSnapshot
 from app.services.indicators import compute_indicators
-from app.services.indicator_cache import upsert_snapshots, get_latest_snapshots
+from app.services.indicator_cache import upsert_snapshots, get_latest_snapshots, get_indicator_history
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,15 @@ def get_snapshots(
     """
     sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     return get_latest_snapshots(sym_list)
+
+
+@router.get("/history", response_model=list[IndicatorSnapshot])
+def get_history(
+    symbol: str = Query(..., description="Ticker symbol"),
+    limit:  int = Query(252, ge=1, le=504),
+):
+    """Return indicator history for a symbol (for chart overlays), oldest → newest."""
+    return get_indicator_history(symbol.upper(), limit=limit)
 
 
 @router.post("/compute", response_model=IndicatorComputeResponse)

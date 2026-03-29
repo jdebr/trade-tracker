@@ -8,6 +8,23 @@ from app.database import get_client
 logger = logging.getLogger(__name__)
 
 
+def get_indicator_history(symbol: str, limit: int = 252) -> list[dict]:
+    """
+    Return up to `limit` indicator snapshot rows for a symbol,
+    ordered oldest → newest (ready for chart overlay consumption).
+    """
+    result = (
+        get_client()
+        .table("indicator_snapshots")
+        .select("date,bb_upper,bb_middle,bb_lower,ema_8,ema_21,ema_50")
+        .eq("symbol", symbol.upper())
+        .order("date", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return list(reversed(result.data))
+
+
 def get_latest_snapshots(symbols: list[str]) -> list[dict]:
     """
     Return the most-recent indicator snapshot for each requested symbol.
