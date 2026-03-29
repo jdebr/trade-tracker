@@ -382,48 +382,66 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 6. ⬜ Build React frontend (MVP)
+### 6. ✅ Build React frontend (MVP)
 
 **Subtasks**
-- [ ] Set up React Router, global layout, nav
-- [ ] Watchlist manager: add/remove tickers, group assignment
-- [ ] Scanner view: table of watchlist tickers with live indicator values, color-coded status
-- [ ] Screener view: trigger run button, ranked results table
-- [ ] Chart view: TradingView Lightweight Charts with candlesticks + BB + EMA overlays
-- [ ] Alert display: list of unacknowledged alerts with condition detail
+- [x] 6a — Set up React + Vite, Tailwind v4, shadcn/ui primitives, `@/lib/api`, routing scaffold
+- [x] 6b — Screener view: Run button, ranked results table, score badges, signal dots
+- [x] 6c — Layout shell: Sidebar (desktop) + BottomNav (mobile), React Router nested routes, smoke tests
+- [x] 6d — Watchlist manager: add/remove tickers, group assignment, ticker count footer
+- [x] 6e — Scanner view: watchlist → indicator snapshots, RSI/MACD colour coding, bool signal dots
+- [x] 6f — Chart view: TradingView Lightweight Charts, candlestick/line toggle, 1M/3M/6M/1Y/All zoom, BB + EMA overlays, TradingView deep link
+- [x] 6g — Alerts view: alert cards with type badges, acknowledge + clear-all, unread count badge in nav
 
 **Testing criteria**
-- Can add/remove tickers from watchlist and see changes persist
-- Scanner table renders all indicator columns and updates on page load
-- Screener run triggers backend call and displays ranked results
-- Chart loads for any watchlist ticker and renders correctly
+- [x] Can add/remove tickers from watchlist and see changes persist
+- [x] Scanner table renders all indicator columns and updates on page load
+- [x] Screener run triggers backend call and displays ranked results
+- [x] Chart loads for any watchlist ticker and renders correctly
+- [x] 51 tests across 7 test files, all passing; production build clean (493KB JS / gzip 155KB)
 
 **Technical notes**
-- Frontend stack: React + Vite, scaffolded in `frontend/`
+- Frontend stack: React + Vite (ESM, no TypeScript); `@tailwindcss/vite` plugin (Tailwind v4)
+- Tailwind v4 uses `@theme inline` block in `index.css` to map CSS variables to utility classes; dark mode via `class="dark"` on `<html>`
+- shadcn/ui pattern (manual install): `cn()` + `cva` + Radix UI Slot; components in `frontend/src/components/ui/`
+- `@/lib/api.js` — thin fetch wrapper with `get/post/patch/delete`; base URL from `VITE_API_URL` env var
+- TanStack Query v5: `useQuery`, `useMutation`, `queryClient.invalidateQueries`; default `staleTime: 60_000`
+- MSW v2 (`msw/node`) for API mocking in Vitest; handlers in `src/test/handlers.js`; jsdom needs `ResizeObserver` stub
+- `lightweight-charts` v5 is ESM-only + uses canvas — fully mocked with `vi.mock()` in chart tests
+- Chart overlays: BB bands (indigo/violet), EMA 8 (amber), EMA 21 (emerald), EMA 50 (blue)
+- Responsive layout: Sidebar (`hidden md:flex w-56`) + BottomNav (`md:hidden fixed bottom-0`); both share alert unread count from `GET /alerts`
+- New backend endpoints added for frontend: `GET /ohlcv/bars`, `GET /indicators/snapshots`, `GET /indicators/history`, full alerts CRUD (`GET /alerts`, `PATCH /alerts/{id}/acknowledge`, `POST /alerts/acknowledge-all`)
+- Last commit: `96817a0` — "feat: milestone 6g — alerts view + polish pass"
 - Will deploy to Vercel (free tier) — configure `VITE_API_URL` env var pointing at backend
-- Use `@supabase/supabase-js` on the frontend with the `anon` key (read-only, public data only)
-- Sensitive ops (screener run, writes) go through the FastAPI backend, not direct Supabase calls from frontend
-- TradingView Lightweight Charts: `npm install lightweight-charts`
 
 ---
 
-### 7. ⬜ Wire up APScheduler (daily scan)
+### 7. ✅ Wire up APScheduler (daily scan)
 
 **Subtasks**
-- [ ] Add APScheduler to FastAPI app startup
-- [ ] Schedule watchlist scan job at 4:00 PM ET daily (Mon–Fri)
-- [ ] Job: fetch OHLCV → compute indicators → evaluate alert conditions → write to `alerts`
-- [ ] Skip job on market holidays (use `pandas_market_calendars` or a static holiday list)
+- [x] Add APScheduler to FastAPI app startup via `lifespan` context manager
+- [x] Schedule watchlist scan job at 4:00 PM ET daily (Mon–Fri)
+- [x] Job pipeline: fetch OHLCV → compute indicators → evaluate 6 alert conditions → insert deduped alerts
+- [x] Skip job on NYSE market holidays (`pandas_market_calendars`)
+- [x] Pause/resume controls with configurable duration
+- [x] Cooldown enforcement to protect API quota on both scheduled and manual runs
 
 **Testing criteria**
-- Scheduler starts with the app and logs next run time on startup
-- Manual trigger of the job function populates `alerts` correctly
-- Job skips correctly on a known market holiday
+- [x] Scheduler starts with the app and logs next run time on startup
+- [x] Manual trigger via `POST /scheduler/trigger` respects cooldown (429 if too soon)
+- [x] Job skips correctly on NYSE holidays and weekends
+- [x] All 6 alert conditions evaluated and deduped correctly (34 new tests, 47 total passing)
 
 **Technical notes**
-- Use `APScheduler` with `AsyncIOScheduler` (compatible with FastAPI's async event loop)
-- Timezone: `America/New_York` — set explicitly on the cron trigger
-- Job should be idempotent: re-running on the same day upserts, doesn't duplicate alerts
+- New files: `app/services/scanner.py`, `app/services/scheduler.py`, `app/routers/scheduler.py`
+- `AsyncIOScheduler` with `CronTrigger(day_of_week="mon-fri", hour=16, timezone="America/New_York")`
+- `max_instances=1`, `coalesce=True`, `misfire_grace_time=3600` — no overlapping runs; one catch-up if server was down at fire time
+- Alert conditions: `bb_squeeze`, `rsi_oversold` (<30), `rsi_overbought` (>70), `macd_crossover` (hist ≤0→>0), `ema_crossover` (ema_8 crosses above ema_21), `vol_expansion` (3d avg > 20d avg)
+- Crossover detection requires 2 consecutive snapshots; silently skipped if only 1 exists
+- Dedup: queries `(symbol, alert_type)` pairs already in `alerts` for today before inserting — fully idempotent
+- Pause is in-memory (resets on restart); cooldown `_last_run_at` is set before scan starts so it activates even on partial failure
+- `.env` knobs: `SCHEDULER_ENABLED`, `SCHEDULER_HOUR`, `SCHEDULER_MINUTE`, `SCAN_COOLDOWN_MINUTES` (default 60)
+- API: `GET /scheduler/status`, `POST /scheduler/trigger`, `POST /scheduler/pause?hours=N`, `POST /scheduler/resume`
 
 ---
 
@@ -463,3 +481,22 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 - Render.com is simpler to deploy than EC2 for a personal project — recommended first choice
 - Backend deploy: push to GitHub → Render auto-deploys from `main` branch
 - CORS: allow `https://<your-vercel-app>.vercel.app` and `http://localhost:5173` (dev)
+
+### 10. Public API
+[TODO]
+
+### 11. Claude Skill for public api
+[TODO]
+
+### 12. App User Guide
+- Explain app features and functionality
+- Informs testing and future work
+
+### 13. Integration testing
+[TODO]
+
+### 14. End-to-end testing
+[TODO]
+
+### 15. Future work, next features
+[TODO]

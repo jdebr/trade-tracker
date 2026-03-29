@@ -10,3 +10,9 @@ SUPABASE_SERVICE_ROLE_KEY: str = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 SUPABASE_ANON_KEY: str = os.environ["SUPABASE_ANON_KEY"]
 TWELVE_DATA_API_KEY: str = os.getenv("TWELVE_DATA_API_KEY", "")
 ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+# Scheduler
+SCHEDULER_ENABLED: bool = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"
+SCHEDULER_HOUR: int = int(os.getenv("SCHEDULER_HOUR", "16"))
+SCHEDULER_MINUTE: int = int(os.getenv("SCHEDULER_MINUTE", "0"))
+SCAN_COOLDOWN_MINUTES: int = int(os.getenv("SCAN_COOLDOWN_MINUTES", "60"))
