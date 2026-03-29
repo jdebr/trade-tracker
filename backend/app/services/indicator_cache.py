@@ -8,6 +8,33 @@ from app.database import get_client
 logger = logging.getLogger(__name__)
 
 
+def get_latest_snapshots(symbols: list[str]) -> list[dict]:
+    """
+    Return the most-recent indicator snapshot for each requested symbol.
+    Symbols with no snapshot are omitted from the result.
+    """
+    if not symbols:
+        return []
+
+    result = (
+        get_client()
+        .table("indicator_snapshots")
+        .select("*")
+        .in_("symbol", symbols)
+        .order("date", desc=True)
+        .execute()
+    )
+
+    seen: set[str] = set()
+    rows: list[dict] = []
+    for row in result.data:
+        sym = row["symbol"]
+        if sym not in seen:
+            seen.add(sym)
+            rows.append(row)
+    return rows
+
+
 def upsert_snapshots(snapshots: list[dict]) -> int:
     """
     Upsert a list of indicator snapshot dicts.

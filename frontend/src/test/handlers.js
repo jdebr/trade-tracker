@@ -32,6 +32,21 @@ export const MOCK_RUN_RESPONSE = {
   candidates: MOCK_SCREENER_RESULTS,
 }
 
+export const MOCK_SNAPSHOTS = [
+  {
+    symbol: "AAPL", date: "2026-03-28",
+    rsi_14: 52.3, bb_squeeze: true,  macd_hist: 0.45, ema_50: 205.0, atr_14: 3.2,
+  },
+  {
+    symbol: "MSFT", date: "2026-03-28",
+    rsi_14: 72.1, bb_squeeze: false, macd_hist: -0.2, ema_50: 410.0, atr_14: 5.8,
+  },
+  {
+    symbol: "JPM",  date: "2026-03-28",
+    rsi_14: 28.4, bb_squeeze: false, macd_hist: 0.01, ema_50: 235.0, atr_14: 2.9,
+  },
+]
+
 export const MOCK_WATCHLIST = [
   { id: "1", symbol: "AAPL", group_name: "Tech",  added_at: "2026-03-01T00:00:00Z" },
   { id: "2", symbol: "MSFT", group_name: "Tech",  added_at: "2026-03-02T00:00:00Z" },
@@ -53,6 +68,10 @@ export const handlers = [
 
   http.get(`${API_URL}/watchlist`, () =>
     HttpResponse.json(MOCK_WATCHLIST)
+  ),
+
+  http.get(`${API_URL}/indicators/snapshots`, () =>
+    HttpResponse.json(MOCK_SNAPSHOTS)
   ),
 
   http.post(`${API_URL}/watchlist`, async ({ request }) => {
