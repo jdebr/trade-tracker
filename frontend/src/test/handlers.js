@@ -99,6 +99,35 @@ export const MOCK_WATCHLIST = [
   { id: "3", symbol: "JPM",  group_name: "Banks", added_at: "2026-03-03T00:00:00Z" },
 ]
 
+export const MOCK_SCHEDULER_STATUS = {
+  enabled: true,
+  paused: false,
+  pause_until: null,
+  next_run_time: "2026-03-29T20:00:00Z",
+  last_run_at: "2026-03-28T20:00:00Z",
+  last_run_result: null,
+  cooldown_minutes: 60,
+  seconds_until_cooldown_expires: null,
+  schedule: "16:00 ET Mon–Fri",
+}
+
+export const MOCK_JOB_ID = "test-job-123"
+
+export const MOCK_JOB_DONE = {
+  job_id: MOCK_JOB_ID,
+  status: "done",
+  created_at: "2026-03-29T20:00:00Z",
+  started_at: "2026-03-29T20:00:01Z",
+  finished_at: "2026-03-29T20:01:00Z",
+  result: {
+    run_at: MOCK_RUN_RESPONSE.run_at,
+    pass1_count: MOCK_RUN_RESPONSE.pass1_count,
+    pass2_count: MOCK_RUN_RESPONSE.pass2_count,
+    candidates: MOCK_RUN_RESPONSE.candidates,
+  },
+  error: null,
+}
+
 export const handlers = [
   http.get(`${API_URL}/health`, () =>
     HttpResponse.json({ status: "ok" })
@@ -108,8 +137,21 @@ export const handlers = [
     HttpResponse.json(MOCK_SCREENER_RESULTS)
   ),
 
+  // Background job: POST returns job_id, GET /job/:id returns done immediately
   http.post(`${API_URL}/screener/run`, () =>
-    HttpResponse.json(MOCK_RUN_RESPONSE)
+    HttpResponse.json({ job_id: MOCK_JOB_ID, status: "pending" }, { status: 202 })
+  ),
+
+  http.get(`${API_URL}/screener/job/:jobId`, () =>
+    HttpResponse.json(MOCK_JOB_DONE)
+  ),
+
+  http.get(`${API_URL}/scheduler/status`, () =>
+    HttpResponse.json(MOCK_SCHEDULER_STATUS)
+  ),
+
+  http.post(`${API_URL}/scheduler/trigger`, () =>
+    HttpResponse.json({ message: "Scan completed", result: null })
   ),
 
   http.get(`${API_URL}/watchlist`, () =>

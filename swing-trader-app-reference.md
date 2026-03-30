@@ -445,20 +445,39 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 8. ⬜ Add screener on-demand trigger from dashboard
+### 8. ✅ Add screener on-demand trigger from dashboard + UX polish
 
 **Subtasks**
-- [ ] "Run Screener" button in frontend hits `POST /screener/run`
-- [ ] Show progress indicator while running (can take 30–90 seconds with cold cache)
-- [ ] Display results immediately on completion without page reload
+- [x] `POST /screener/run` returns `202 + job_id` immediately via FastAPI `BackgroundTasks`
+- [x] `GET /screener/job/{job_id}` endpoint for polling — returns status, result, error
+- [x] In-memory job registry (`screener_job.py`) — OrderedDict, max 20 entries, auto-evicts oldest
+- [x] ScreenerPage polls every 2s until done/error; shows pulse progress message while running
+- [x] Run metadata shown after completion: run timestamp, pass1_count, pass2_count
+- [x] ScannerPage: scheduler status bar (last scan, next scan, pause notice, cooldown countdown)
+- [x] ScannerPage: "Run Scan Now" button → `POST /scheduler/trigger` with 429 cooldown handling
+- [x] ScannerPage: Retry button on snapshot fetch error; actionable empty state
+- [x] ChartPage: fixed deprecated `onSuccess` → `useEffect` for auto-symbol-select
+- [x] ChartPage: "Run Scan Now" guidance in no-bars error instead of dead-end message
+- [x] WatchlistPage: distinct errors for FK violation, duplicate symbol, and generic failures
+- [x] WatchlistPage: inline error on remove failure
 
 **Testing criteria**
-- Button triggers run, shows loading state, then renders results
-- Works end-to-end from deployed frontend → backend → Supabase
+- [x] Button triggers async run, shows progress, then renders results (polling tested with MSW)
+- [x] Job error state shown when backend reports failure; button re-enables
+- [x] Cooldown disables Run Scan Now; paused scheduler shows notice
+- [x] All 3 watchlist add error cases tested (FK, duplicate, generic)
+- [x] Chart auto-selects first symbol without deprecated API
+- [x] 69 frontend tests passing (18 new), 47 backend tests passing
 
 **Technical notes**
-- Consider using a background task (`BackgroundTasks` in FastAPI) so the endpoint returns immediately with a job ID, then poll for completion
-- This is particularly important once deployed, where request timeouts may be an issue
+- New file: `app/services/screener_job.py` — `create_job / set_running / set_done / set_error / get_job`
+- `POST /screener/run` → `202 {job_id, status: "pending"}`; worker calls `asyncio.to_thread(run_screener)`
+- `GET /screener/job/{id}` → `{status, result, error, created_at, started_at, finished_at}`
+- Job registry is in-memory — resets on server restart; 404 response includes a note about this
+- Frontend `refetchInterval` callback stops polling when status is `done` or `error`
+- Scanner `POST /scheduler/trigger` 429 errors parsed and surfaced as human-readable messages
+- `friendlyAddError()` checks duplicate before FK (FK message contains "violates", a substring of duplicate key messages)
+- Last commit: `f4101fc` (Milestone 7); this work committed on top
 
 ---
 

@@ -102,10 +102,22 @@ function WatchlistRow({ entry, onRemove, isRemoving }) {
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
+function friendlyAddError(rawMessage) {
+  if (!rawMessage) return null
+  // Duplicate symbol — check before FK since "duplicate key violates unique constraint" contains "violates"
+  if (rawMessage.includes("duplicate") || rawMessage.includes("unique") || rawMessage.includes("409") || rawMessage.includes("23505"))
+    return "That symbol is already in your watchlist."
+  // FK violation: symbol not in tickers table
+  if (rawMessage.includes("foreign key") || rawMessage.includes("violates") || rawMessage.includes("422"))
+    return "Symbol not found in the universe. Run the Screener first to sync tickers, then try again."
+  return "Failed to add symbol. Check the ticker and try again."
+}
+
 export default function WatchlistPage() {
   const queryClient = useQueryClient()
-  const [addError, setAddError] = useState(null)
-  const [removing, setRemoving] = useState(null)
+  const [addError,    setAddError]    = useState(null)
+  const [removeError, setRemoveError] = useState(null)
+  const [removing,    setRemoving]    = useState(null)
 
   const { data: entries = [], isLoading } = useQuery({
     queryKey: ["watchlist"],
@@ -118,20 +130,25 @@ export default function WatchlistPage() {
       setAddError(null)
       queryClient.invalidateQueries({ queryKey: ["watchlist"] })
     },
-    onError: (err) => setAddError(err.message),
+    onError: (err) => setAddError(friendlyAddError(err.message)),
   })
 
   const { mutate: removeEntry } = useMutation({
     mutationFn: (symbol) => api.delete(`/watchlist/${symbol}`),
     onSuccess: () => {
       setRemoving(null)
+      setRemoveError(null)
       queryClient.invalidateQueries({ queryKey: ["watchlist"] })
     },
-    onError: () => setRemoving(null),
+    onError: (_, symbol) => {
+      setRemoving(null)
+      setRemoveError(`Failed to remove ${symbol}. Please try again.`)
+    },
   })
 
   function handleRemove(symbol) {
     setRemoving(symbol)
+    setRemoveError(null)
     removeEntry(symbol)
   }
 
@@ -170,6 +187,10 @@ export default function WatchlistPage() {
           />
         ))}
       </div>
+
+      {removeError && (
+        <p role="alert" className="text-xs text-destructive mt-2">{removeError}</p>
+      )}
 
       {!isLoading && entries.length > 0 && (
         <p className="text-xs text-muted-foreground mt-3 text-right">

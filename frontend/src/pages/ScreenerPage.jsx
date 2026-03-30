@@ -10,9 +10,6 @@ import { cn } from "@/lib/utils"
 // Helpers
 // ---------------------------------------------------------------------------
 
-const SCORE_VARIANTS = ["neutral", "neutral", "neutral", "bull", "bull"]
-const SCORE_LABELS   = ["0", "1", "2", "3", "4"]
-
 function ScoreBadge({ score }) {
   const variant = score >= 3 ? "bull" : score >= 1 ? "secondary" : "neutral"
   return (
@@ -41,6 +38,13 @@ function SignalDot({ value, label }) {
       {label}
     </span>
   )
+}
+
+function fmtRunAt(iso) {
+  if (!iso) return null
+  return new Date(iso).toLocaleString("en-US", {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -146,27 +150,79 @@ function ResultsCards({ rows }) {
 }
 
 // ---------------------------------------------------------------------------
+// Run metadata bar
+// ---------------------------------------------------------------------------
+
+function RunMeta({ runAt, pass1Count, pass2Count }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-3">
+      {runAt && <span>Run: {fmtRunAt(runAt)}</span>}
+      {pass1Count != null && <span>Pass 1: {pass1Count} candidates</span>}
+      {pass2Count != null && <span>Pass 2: {pass2Count} with signals</span>}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default function ScreenerPage() {
   const queryClient = useQueryClient()
+  const [jobId,    setJobId]    = useState(null)
+  const [runMeta,  setRunMeta]  = useState(null)   // {run_at, pass1_count, pass2_count}
   const [runError, setRunError] = useState(null)
 
+  // ---- Existing results ----
   const { data: results, isLoading, isError } = useQuery({
     queryKey: ["screener-results"],
     queryFn: () => api.get("/screener/results"),
     retry: false,
   })
 
-  const { mutate: runScreener, isPending: isRunning } = useMutation({
+  // ---- Trigger run → get job_id ----
+  const { mutate: startRun, isPending: isStarting } = useMutation({
     mutationFn: () => api.post("/screener/run"),
-    onSuccess: () => {
+    onSuccess: ({ job_id }) => {
+      setJobId(job_id)
       setRunError(null)
-      queryClient.invalidateQueries({ queryKey: ["screener-results"] })
     },
-    onError: (err) => setRunError(err.message),
+    onError: (err) => {
+      setRunError(`Failed to start screener: ${err.message}`)
+    },
   })
+
+  // ---- Poll job status while jobId is set ----
+  const { data: jobStatus } = useQuery({
+    queryKey: ["screener-job", jobId],
+    queryFn: () => api.get(`/screener/job/${jobId}`),
+    enabled: !!jobId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (status === "done" || status === "error") return false
+      return 2000
+    },
+    onError: () => setRunError("Lost connection to screener job. Check server logs."),
+  })
+
+  // When job completes, refresh results and clear job
+  if (jobStatus?.status === "done" && jobId) {
+    setRunMeta(jobStatus.result)
+    setJobId(null)
+    queryClient.invalidateQueries({ queryKey: ["screener-results"] })
+  }
+  if (jobStatus?.status === "error" && jobId) {
+    setRunError(`Screener failed: ${jobStatus.error}`)
+    setJobId(null)
+  }
+
+  const isRunning = isStarting || (!!jobId && jobStatus?.status !== "done" && jobStatus?.status !== "error")
+
+  const runButtonLabel = isStarting
+    ? "Starting…"
+    : isRunning
+    ? "Running…"
+    : "Run Screener"
 
   return (
     <div>
@@ -179,13 +235,24 @@ export default function ScreenerPage() {
           </p>
         </div>
         <Button
-          onClick={() => runScreener()}
+          onClick={() => startRun()}
           disabled={isRunning}
-          aria-label="Run screener"
         >
-          {isRunning ? "Running…" : "Run Screener"}
+          {runButtonLabel}
         </Button>
       </div>
+
+      {/* Progress message while running */}
+      {isRunning && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-4 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground flex items-center gap-2"
+        >
+          <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" aria-hidden="true" />
+          Scanning S&amp;P 500 — this takes 30–90 seconds with a cold cache…
+        </div>
+      )}
 
       {/* Run error */}
       {runError && (
@@ -200,12 +267,12 @@ export default function ScreenerPage() {
       {/* Results */}
       {isLoading && <ResultsSkeleton />}
 
-      {isError && !isLoading && (
+      {!isLoading && isError && (
         <div
           role="alert"
           className="mt-4 rounded-lg border border-border bg-muted/50 px-4 py-8 text-center text-muted-foreground"
         >
-          No screener results yet. Run the screener to generate results.
+          No screener results yet. Click <strong>Run Screener</strong> to generate results.
         </div>
       )}
 
@@ -213,12 +280,19 @@ export default function ScreenerPage() {
         <>
           <ResultsTable rows={results} />
           <ResultsCards rows={results} />
+          {runMeta && (
+            <RunMeta
+              runAt={runMeta.run_at}
+              pass1Count={runMeta.pass1_count}
+              pass2Count={runMeta.pass2_count}
+            />
+          )}
         </>
       )}
 
       {results && results.length === 0 && (
         <div className="mt-4 rounded-lg border border-border bg-muted/50 px-4 py-8 text-center text-muted-foreground">
-          No candidates found. Try running the screener again.
+          No candidates matched the filters. Try running the screener again on a different day.
         </div>
       )}
     </div>

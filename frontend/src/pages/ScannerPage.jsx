@@ -1,5 +1,8 @@
-import { useQuery } from "@tanstack/react-query"
+import { useState } from "react"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { RefreshCw } from "lucide-react"
 import { api } from "@/lib/api"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
@@ -37,6 +40,65 @@ function BoolDot({ value }) {
 
 function fmt(n, decimals = 2) {
   return n != null ? Number(n).toFixed(decimals) : "—"
+}
+
+function fmtDatetime(iso) {
+  if (!iso) return null
+  return new Date(iso).toLocaleString("en-US", {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler status bar
+// ---------------------------------------------------------------------------
+
+function SchedulerStatusBar({ onRunNow, isRunning, scanError }) {
+  const { data: status } = useQuery({
+    queryKey: ["scheduler-status"],
+    queryFn: () => api.get("/scheduler/status"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
+
+  const lastRun  = status?.last_run_at ? fmtDatetime(status.last_run_at) : "Never"
+  const nextRun  = status?.next_run_time ? fmtDatetime(status.next_run_time) : "—"
+  const paused   = status?.paused
+  const cooldown = status?.seconds_until_cooldown_expires
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 mb-5 px-3 py-2.5 rounded-lg border border-border bg-muted/30 text-xs text-muted-foreground">
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <span>Last scan: <strong className="text-foreground">{lastRun}</strong></span>
+        {!paused && <span>Next scan: <strong className="text-foreground">{nextRun}</strong></span>}
+        {paused && (
+          <span className="text-amber-600 dark:text-amber-400 font-medium">
+            Scheduler paused until {fmtDatetime(status.pause_until)}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        {scanError && (
+          <span role="alert" className="text-destructive">{scanError}</span>
+        )}
+        {cooldown != null && !isRunning && (
+          <span className="text-muted-foreground">
+            Cooldown: {Math.ceil(cooldown / 60)}m remaining
+          </span>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRunNow}
+          disabled={isRunning || cooldown != null}
+          aria-label="Run scan now"
+        >
+          <RefreshCw size={13} className={cn("mr-1.5", isRunning && "animate-spin")} aria-hidden="true" />
+          {isRunning ? "Scanning…" : "Run Scan Now"}
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +216,9 @@ function ScannerSkeleton() {
 // ---------------------------------------------------------------------------
 
 export default function ScannerPage() {
+  const queryClient = useQueryClient()
+  const [scanError, setScanError] = useState(null)
+
   const { data: watchlist = [], isLoading: loadingWatchlist } = useQuery({
     queryKey: ["watchlist"],
     queryFn: () => api.get("/watchlist"),
@@ -164,23 +229,50 @@ export default function ScannerPage() {
   const {
     data: snapshots = [],
     isLoading: loadingSnapshots,
-    isError,
+    isError: snapshotsError,
+    refetch: refetchSnapshots,
   } = useQuery({
     queryKey: ["snapshots", symbols],
     queryFn: () => api.get(`/indicators/snapshots?symbols=${symbols.join(",")}`),
     enabled: symbols.length > 0,
   })
 
+  const { mutate: runScan, isPending: isRunning } = useMutation({
+    mutationFn: () => api.post("/scheduler/trigger"),
+    onSuccess: () => {
+      setScanError(null)
+      // Refetch snapshots after a short delay to pick up fresh indicators
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["snapshots"] })
+        queryClient.invalidateQueries({ queryKey: ["scheduler-status"] })
+      }, 3000)
+    },
+    onError: (err) => {
+      // 429 = cooldown or paused; surface the detail message
+      const msg = err.message.includes("429")
+        ? err.message.replace(/^API 429: /, "").replace(/^"(.*)"$/, "$1")
+        : "Failed to trigger scan. Check that the server is running."
+      setScanError(msg)
+    },
+  })
+
   const isLoading = loadingWatchlist || loadingSnapshots
 
   return (
     <div>
-      <div className="mb-6">
+      <div className="mb-4">
         <h1 className="text-2xl font-semibold">Scanner</h1>
         <p className="text-muted-foreground text-sm mt-0.5">
           Live indicator status for your watchlist
         </p>
       </div>
+
+      {/* Scheduler status + run now button — always shown */}
+      <SchedulerStatusBar
+        onRunNow={() => runScan()}
+        isRunning={isRunning}
+        scanError={scanError}
+      />
 
       {isLoading && <ScannerSkeleton />}
 
@@ -190,15 +282,21 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {!isLoading && watchlist.length > 0 && isError && (
-        <div role="alert" className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          Failed to load indicator snapshots.
+      {!isLoading && watchlist.length > 0 && snapshotsError && (
+        <div className="space-y-3">
+          <div role="alert" className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            Failed to load indicator snapshots.
+          </div>
+          <Button variant="outline" size="sm" onClick={() => refetchSnapshots()}>
+            Retry
+          </Button>
         </div>
       )}
 
-      {!isLoading && snapshots.length === 0 && watchlist.length > 0 && !isError && (
+      {!isLoading && snapshots.length === 0 && watchlist.length > 0 && !snapshotsError && (
         <div className="rounded-lg border border-border bg-muted/50 px-4 py-10 text-center text-muted-foreground text-sm">
-          No indicator snapshots found. Run <strong>Indicators → Compute</strong> first.
+          No indicator snapshots found.{" "}
+          Use <strong>Run Scan Now</strong> above or wait for the scheduled 4 PM ET scan.
         </div>
       )}
 

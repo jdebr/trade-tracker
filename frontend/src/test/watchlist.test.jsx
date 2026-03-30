@@ -1,13 +1,17 @@
 /**
- * Milestone 6d watchlist tests.
+ * Watchlist tests — Milestones 6d + 8.
  *
  * Criteria:
- * 1. Watchlist items render from GET /watchlist
- * 2. Add form submits POST /watchlist with symbol + group
- * 3. Symbol is uppercased before submit
- * 4. Added entry appears after success (query invalidated)
- * 5. Remove button calls DELETE /watchlist/{symbol}
- * 6. Empty state shown when list is empty
+ * 1.  Watchlist items render from GET /watchlist
+ * 2.  Add form submits POST /watchlist with symbol + group
+ * 3.  Symbol is uppercased before submit
+ * 4.  Added entry appears after success (query invalidated)
+ * 5.  Remove button calls DELETE /watchlist/{symbol}
+ * 6.  Empty state shown when list is empty
+ * 7.  FK / 422 error on add shows friendly "run Screener first" message
+ * 8.  Duplicate symbol (409/23505) error shows friendly message
+ * 9.  Generic add error shows fallback message
+ * 10. Remove failure shows inline error message
  */
 
 import { it, expect, vi } from "vitest"
@@ -124,5 +128,71 @@ it("shows empty state when watchlist is empty", async () => {
   renderPage()
   await waitFor(() =>
     expect(screen.getByText(/your watchlist is empty/i)).toBeInTheDocument()
+  )
+})
+
+// 7. FK / 422 error → "run Screener first" guidance
+it("shows screener-first guidance on FK constraint violation", async () => {
+  server.use(
+    http.post("http://localhost:8000/watchlist", () =>
+      HttpResponse.json(
+        { detail: "foreign key constraint violates" },
+        { status: 422 }
+      )
+    )
+  )
+  const { user } = renderPage()
+  await waitFor(() => screen.getByText("AAPL"))
+  await user.type(screen.getByLabelText(/ticker symbol/i), "ZZZZ")
+  await user.click(screen.getByRole("button", { name: /^add$/i }))
+  await waitFor(() =>
+    expect(screen.getByRole("alert").textContent).toMatch(/run the screener first/i)
+  )
+})
+
+// 8. Duplicate symbol → friendly message
+it("shows duplicate-symbol message on 409 conflict", async () => {
+  server.use(
+    http.post("http://localhost:8000/watchlist", () =>
+      HttpResponse.json({ detail: "duplicate key violates unique constraint 23505" }, { status: 409 })
+    )
+  )
+  const { user } = renderPage()
+  await waitFor(() => screen.getByText("AAPL"))
+  await user.type(screen.getByLabelText(/ticker symbol/i), "AAPL")
+  await user.click(screen.getByRole("button", { name: /^add$/i }))
+  await waitFor(() =>
+    expect(screen.getByRole("alert").textContent).toMatch(/already in your watchlist/i)
+  )
+})
+
+// 9. Generic add error → fallback message
+it("shows fallback error for unexpected add failures", async () => {
+  server.use(
+    http.post("http://localhost:8000/watchlist", () =>
+      HttpResponse.json({ detail: "Internal server error" }, { status: 500 })
+    )
+  )
+  const { user } = renderPage()
+  await waitFor(() => screen.getByText("AAPL"))
+  await user.type(screen.getByLabelText(/ticker symbol/i), "TEST")
+  await user.click(screen.getByRole("button", { name: /^add$/i }))
+  await waitFor(() =>
+    expect(screen.getByRole("alert").textContent).toMatch(/failed to add symbol/i)
+  )
+})
+
+// 10. Remove failure shows inline error
+it("shows inline error when DELETE /watchlist/{symbol} fails", async () => {
+  server.use(
+    http.delete("http://localhost:8000/watchlist/:symbol", () =>
+      HttpResponse.json({ detail: "Server error" }, { status: 500 })
+    )
+  )
+  renderPage()
+  await waitFor(() => screen.getByText("AAPL"))
+  fireEvent.click(screen.getByRole("button", { name: /remove aapl/i }))
+  await waitFor(() =>
+    expect(screen.getByRole("alert").textContent).toMatch(/failed to remove aapl/i)
   )
 })

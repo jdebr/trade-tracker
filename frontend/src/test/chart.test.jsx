@@ -1,18 +1,20 @@
 /**
- * Milestone 6f chart tests.
+ * Chart page tests — Milestones 6f + 8.
  *
  * lightweight-charts manipulates a canvas via DOM APIs not available in
  * jsdom, so we mock the entire module and focus on testing the React shell.
  *
  * Criteria:
  * 1. Symbol picker renders watchlist tickers
- * 2. Selecting a symbol marks it as active
+ * 2. Selecting a symbol marks it as active (aria-pressed)
  * 3. Chart type toggle buttons render and respond to click
  * 4. Zoom buttons render all 5 options
  * 5. TradingView link renders with correct symbol in href
  * 6. Loading skeleton shown while bars are fetching
  * 7. Empty state when watchlist is empty
  * 8. Overlay toggle buttons render
+ * 9. First symbol is auto-selected when watchlist loads (no onSuccess deprecation)
+ * 10. Error message references "Run Scan Now" when no bars exist for symbol
  */
 
 import { it, expect, vi } from "vitest"
@@ -120,4 +122,25 @@ it("renders BB Bands and EMAs overlay toggles", async () => {
   renderPage()
   await waitFor(() => screen.getByRole("button", { name: /bb bands/i }))
   expect(screen.getByRole("button", { name: /emas/i })).toBeInTheDocument()
+})
+
+// 9. First watchlist symbol auto-selected on load (useEffect, not deprecated onSuccess)
+it("auto-selects the first watchlist symbol on load", async () => {
+  renderPage()
+  await waitFor(() => screen.getByRole("button", { name: "AAPL" }))
+  expect(screen.getByRole("button", { name: "AAPL" })).toHaveAttribute("aria-pressed", "true")
+  expect(screen.getByRole("button", { name: "MSFT" })).toHaveAttribute("aria-pressed", "false")
+})
+
+// 10. No-bars error references "Run Scan Now"
+it("error message references Run Scan Now when no bars exist", async () => {
+  server.use(
+    http.get("http://localhost:8000/ohlcv/bars", () =>
+      HttpResponse.json({ detail: "No cached bars" }, { status: 404 })
+    )
+  )
+  renderPage()
+  await waitFor(() => screen.getByRole("button", { name: "AAPL" }))
+  await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument())
+  expect(screen.getByRole("alert").textContent).toMatch(/run scan now/i)
 })

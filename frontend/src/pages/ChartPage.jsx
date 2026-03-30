@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ExternalLink } from "lucide-react"
 import { subMonths, subYears, parseISO, isAfter } from "date-fns"
@@ -154,12 +154,13 @@ export default function ChartPage() {
   const { data: watchlist = [], isLoading: loadingWL } = useQuery({
     queryKey: ["watchlist"],
     queryFn: () => api.get("/watchlist"),
-    onSuccess: (data) => {
-      if (!symbol && data.length > 0) setSymbol(data[0].symbol)
-    },
   })
 
   // Auto-select first symbol once watchlist loads
+  useEffect(() => {
+    if (!symbol && watchlist.length > 0) setSymbol(watchlist[0].symbol)
+  }, [watchlist, symbol])
+
   const activeSymbol = symbol ?? watchlist[0]?.symbol ?? null
 
   // OHLCV bars
@@ -227,7 +228,8 @@ export default function ChartPage() {
 
           {!loadingBars && barsError && (
             <div role="alert" className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              No cached bars for {activeSymbol}. Fetch OHLCV data first.
+              No chart data for <strong>{activeSymbol}</strong>.{" "}
+              Use <strong>Run Scan Now</strong> on the Scanner page to populate data.
             </div>
           )}
 
