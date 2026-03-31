@@ -1,239 +1,142 @@
 # Swing Trader App — Developer Reference
 
-> Summary of initial planning conversation. Use as a starting reference for architecture, stack decisions, and feature scope.
+> Working log for a personal swing trading assistant. Milestones 1–8 are complete. Use this doc to understand the current state of the app, then see the Dev Work Tracker for what's next.
 
 ---
 
 ## Project Overview
 
-A personal, web-hosted swing trading assistant designed to reduce manual chart analysis time. The app surfaces trade candidates and monitors a watchlist — it does **not** execute trades. The user trades via a separate commercial brokerage.
+A personal, web-hosted swing trading assistant that reduces manual chart analysis time. The app identifies trade candidates from the S&P 500 universe and monitors a watchlist of active positions — it does **not** execute trades. Trading occurs via a separate commercial brokerage.
 
 **Goals:**
 - Identify 1–2 high-quality swing trade setups per week (Monday entry, Friday exit)
 - Spend no more than 5–10 hours/week on trading activities
 - Keep infrastructure costs under $25/month
-- Build something useful without overengineering
+
+**Intended weekly workflow:**
+```
+Sunday evening (~15 min):
+  → Run screener on S&P 500 universe from dashboard
+  → Review top candidates, check charts on 2–3 finalists
+  → Pick 1–2 trades for Monday
+
+Mon–Fri (~5 min/day):
+  → Watchlist scanner auto-runs at 4PM ET
+  → Check dashboard for exit condition alerts
+  → Hold or close
+
+Friday:
+  → Close remaining positions
+```
 
 ---
 
-## User Profile
+## Tech Stack
 
-| Attribute | Detail |
+| Layer | Choice | Details |
+|---|---|---|
+| **Frontend** | React + Vite (no TypeScript) | Tailwind v4, shadcn/ui primitives, TanStack Query v5, React Router v6 |
+| **Backend** | FastAPI (Python 3.12) | Conda env `swing-trader`; APScheduler for scheduled scan |
+| **Database** | PostgreSQL via Supabase | Free tier (500MB); 7 tables — see schema below |
+| **Market Data** | Twelve Data (primary) + yfinance fallback | 800 req/day free; OHLCV cached in Supabase to minimize API calls |
+| **Indicators** | `pandas-ta` | RSI, MACD, Bollinger Bands, EMA ribbon (8/21/50), ATR, OBV — computed on cached OHLCV |
+| **Scheduler** | APScheduler `AsyncIOScheduler` | In-process; runs at 4PM ET Mon–Fri, skips NYSE holidays |
+| **Charts** | TradingView Lightweight Charts v5 | Candlestick + BB/EMA overlays; deep link to TradingView.com |
+| **Hosting (planned)** | Render.com (backend) + Vercel (frontend) | Render starter ~$7/mo; Vercel free |
+
+### Running locally
+- Backend: `conda activate swing-trader && cd backend && uvicorn app.main:app --reload`
+- Frontend: `cd frontend && npm run dev`
+- API docs: `http://localhost:8000/docs`
+
+---
+
+## Database Schema
+
+7 tables in Supabase (Postgres). Schema source of truth: `supabase/schema.sql`.
+
+| Table | Purpose |
 |---|---|
-| Trading style | Swing trading (days to weeks) |
-| Target trades | 1–2 per week |
-| Coding level | Advanced (comfortable with infra) |
-| Alert delivery | In-app dashboard only |
-| Monthly budget | $10–$25 |
+| `tickers` | S&P 500 universe — symbol, name, sector, avg_volume, last_price, is_etf |
+| `watchlist` | User's tracked tickers; FK to `tickers.symbol`; optional `group_name` |
+| `ohlcv_cache` | Daily OHLCV bars per symbol; `UNIQUE(symbol, date)` — upserted on every fetch |
+| `indicator_snapshots` | Latest computed indicator values per symbol/date — RSI, MACD, BB, EMA, ATR, OBV |
+| `screener_results` | Output of each screener run — rank, score, signal flags, run timestamp |
+| `alerts` | Fired alert conditions — type, symbol, price_at_trigger, details (JSONB) |
+| `trade_log` | (Schema only) Links to alerts + screener_results via nullable FKs — not yet surfaced in UI |
 
 ---
 
 ## Architecture
 
-### Two-Mode Design
+### Screener vs. Scanner
 
-The core pattern is a **screener/scanner split**:
-
-| Mode | Purpose | When to Run | Scope |
+| Mode | Purpose | Trigger | Scope |
 |---|---|---|---|
-| **Screener** | Broad universe scan to find candidates | On-demand (Sunday evening) | S&P 500 or Russell 1000 (~500 tickers) |
-| **Scanner** | Deep daily monitoring of chosen tickers | Scheduled at market close (4PM ET) | Watchlist (10–20 tickers) |
+| **Screener** | Find new candidates from the full S&P 500 universe | On-demand (user clicks "Run Screener") | ~500 tickers, two-pass filter |
+| **Scanner** | Monitor active watchlist tickers for alert conditions | Scheduled 4PM ET daily (also manual via "Run Scan Now") | Watchlist (10–20 tickers) |
 
-### Weekly Workflow
+### Screener — Two-Pass Logic
 
-```
-Sunday evening (~15 min):
-  → Run screener on S&P 500 universe
-  → Review top 10–15 candidates in dashboard
-  → Manually check charts on 2–3 finalists
-  → Pick 1–2 trades for Monday
+**Pass 1** (static filter, no API cost): avg volume > 1M, price $15–$500, not an ETF → ~150–200 survivors
 
-Mon–Fri (~5 min/day):
-  → Watchlist scanner auto-runs at 4PM ET
-  → Check dashboard for exit condition hits
-  → Hold or close
+**Pass 2** (uses cached OHLCV + indicator snapshots):
 
-Friday:
-  → Close remaining positions
-  → (Optional) log outcome for future tuning
-```
-
----
-
-## Recommended Tech Stack
-
-| Layer | Choice | Notes |
-|---|---|---|
-| **Frontend** | React (Vite) | Hosted on Vercel — free tier sufficient |
-| **Backend** | FastAPI (Python) | On AWS EC2 t3.micro (~$8/mo) or Render.com starter (~$7/mo) |
-| **Database** | PostgreSQL via Supabase | Free tier (500MB) — stores watchlist, indicator snapshots, alert history, OHLCV cache |
-| **Market Data** | Twelve Data (free tier) + yfinance fallback | 800 req/day free; sufficient for swing trading with caching |
-| **Indicator Engine** | `pandas-ta` (Python) | Covers all planned indicators out of the box |
-| **Job Scheduler** | APScheduler (in-process) | Runs scans at market close; on-demand screener runs |
-| **Charts** | TradingView Lightweight Charts | Free, excellent candlestick + overlay support |
-
-### Why Not Lambda?
-
-An always-on small server (EC2 or Render) is preferred over Lambda for this use case:
-- Easier to run scheduled jobs (APScheduler in-process)
-- No cold start latency for on-demand screener runs
-- Simpler to manage indicator calculation workloads
-
----
-
-## Market Data Strategy
-
-### API: Twelve Data (Primary)
-- Free tier: 800 requests/day
-- Supports EOD + 15-min delayed intraday
-- Sufficient for swing trading — no need for real-time tick data
-
-### Caching Strategy
-- Store every OHLCV response in Supabase
-- On each run, only fetch tickers where cached date is stale
-- After a few weeks, incremental updates are minimal
-
-### Screener Universe
-- Start from S&P 500 or Russell 1000 constituent list (free CSV/JSON)
-- Avoids scanning all 8,000+ US tickers
-- 500 tickers × ~1 API call each = well within free tier limits
-
----
-
-## Screener Logic (Two-Pass)
-
-### Pass 1 — Universe Filter
-*Static list, refresh monthly. No API cost.*
-
-- Constituents of S&P 500 or Russell 1000
-- Average daily volume > 1M shares
-- Price between $15–$500
-- Exclude ETFs
-
-**Result:** ~500 tickers → filtered to ~150–200 serious candidates
-
-### Pass 2 — Setup Filter
-*Run Sunday evening using cached/fresh OHLCV data.*
-
-| Signal | Condition | Rationale |
-|---|---|---|
-| Bollinger Band squeeze | Bands narrowing | Predicts explosive move; resolves over days–weeks |
-| RSI | Between 35–65 | Avoids already-extended setups |
-| EMA trend | Price above 50-day EMA | Don't fight the primary trend |
-| Volume expansion | Increasing volume last 2–3 days | Confirms accumulation |
-
-**Output:** Ranked list of 10–15 candidates for manual review
-
----
-
-## Technical Indicators
-
-### Tier 1 — Build First
-
-| Indicator | Params | Use Case |
-|---|---|---|
-| RSI | 14 | Oversold bounces / overbought fades; core swing entry signal |
-| MACD | 12/26/9 | Histogram crossovers align with multi-day moves; easy to scan |
-| Bollinger Bands | 20/2 | Squeeze detection + breakout confirmation |
-| EMA Ribbon | 8 / 21 / 50 | Trend direction at a glance across watchlist |
-
-### Tier 2 — Add After MVP
-
-| Indicator | Use Case |
+| Signal | Condition |
 |---|---|
-| ATR (14) | Stop-loss and target sizing — critical for swing trading |
-| OBV | Confirms whether price moves have institutional backing |
-| Stochastic RSI | More sensitive early-turn detection than plain RSI |
+| BB Squeeze | `bb_width` ≤ 20th percentile of rolling 252-bar window |
+| RSI in range | 35 ≤ RSI ≤ 65 |
+| Above EMA 50 | Close price > EMA-50 |
+| Volume expansion | 3-day avg volume > 20-day avg volume |
 
-### Tier 3 — Later or Manual Only
+Each ticker scores 0–4; output is ranked by `signal_score` descending.
 
-| Indicator | Notes |
+### Scanner — Alert Conditions
+
+Six conditions evaluated against each watchlist ticker's latest snapshot (plus prior snapshot for crossovers):
+
+| Condition | Trigger |
 |---|---|
-| Candlestick patterns | `pandas-ta` can auto-flag (Doji, Hammer, Engulfing, etc.) — good secondary signal layer |
-| Elliott Wave | **Do not automate.** Highly subjective; use as a manual chart-reading skill only |
+| `bb_squeeze` | BB squeeze flag is true |
+| `rsi_oversold` | RSI < 30 |
+| `rsi_overbought` | RSI > 70 |
+| `macd_crossover` | MACD histogram crosses from ≤ 0 to > 0 |
+| `ema_crossover` | EMA-8 crosses above EMA-21 |
+| `vol_expansion` | 3-day avg volume > 20-day avg volume |
 
-### Full Indicator Reference (for future consideration)
+Alerts are deduplicated by `(symbol, alert_type)` per day — fully idempotent.
 
-**Trend:** SMA, EMA, WMA, MACD, ADX, Ichimoku Cloud
-**Momentum/Oscillators:** RSI, Stochastic, CCI, Williams %R
-**Volatility:** Bollinger Bands, ATR, Keltner Channels
-**Volume:** OBV, VWAP, Volume Profile, MFI
-**Pattern-based:** Candlestick patterns, Support/Resistance levels
-
----
-
-## Data Flow
+### Data Flow
 
 ```
-Market Close (4PM ET)
-        ↓
-APScheduler triggers watchlist scan
-        ↓
-FastAPI fetches OHLCV for watchlist tickers (Twelve Data / yfinance fallback)
-        ↓
-pandas-ta runs indicator calculations on each ticker
-        ↓
-Condition engine evaluates alert rules
-  e.g. "RSI < 35 AND price touching lower BB AND OBV rising"
-        ↓
-Results written to Supabase (alerts table + indicator snapshots)
-        ↓
-Dashboard reads on next login → shows triggered alerts + charts
-
-─────────────────────────────────────────
-
-On-Demand (Sunday Screener Run)
-        ↓
-User clicks "Run Screener" in dashboard
-        ↓
-Pass 1: filter pre-loaded universe list
-        ↓
-Pass 2: fetch OHLCV for survivors (use cache where fresh)
-        ↓
-Run BB squeeze + RSI + EMA + volume filters
-        ↓
-Return ranked candidate list to dashboard
+Market Close (4PM ET)                    On-Demand
+        ↓                                      ↓
+APScheduler triggers scan         User clicks "Run Screener"
+        ↓                                      ↓
+FastAPI: fetch OHLCV (Twelve Data / yfinance fallback → cache in Supabase)
+        ↓                                      ↓
+pandas-ta: compute indicators      Pass 1: filter tickers table
+        ↓                                      ↓
+Evaluate 6 alert conditions        Pass 2: score + rank survivors
+        ↓                                      ↓
+Insert deduped alerts              Write screener_results to Supabase
+        ↓                                      ↓
+Dashboard shows alerts + snapshots   Dashboard shows ranked candidates
 ```
 
 ---
 
-## Dashboard Features
+## Dashboard Pages
 
-### MVP (Build First)
+All pages are implemented and working (Milestones 1–8 complete):
 
-- **Watchlist manager** — add/remove tickers, organize into groups (e.g. "Active Trades", "Watching", "Tech")
-- **Scanner view** — table of all watchlist tickers with current indicator values, color-coded by condition status
-- **Screener view** — on-demand run, ranked output table with key signals per candidate
-- **Chart view** — candlestick chart with overlaid indicators per ticker (TradingView Lightweight Charts)
-- **Alert condition display** — shows which rules fired and when
-
-### Post-MVP (Add Later)
-
-- **Alert rule builder** — UI to define custom conditions (e.g. `RSI < 35 AND BB_lower_touch = true`)
-- **Alert history log** — what fired, when, and price outcome (useful for tuning rules)
-- **Composite signal score** — rank tickers by number of bullish signals (e.g. "4 of 5 indicators aligned") rather than binary alerts
-- **Multi-timeframe view** — confirm daily setups against weekly chart
-
-### Deprioritize / Skip
-
-- Real-time intraday data (overkill for weekly swings, expensive)
-- Elliott Wave automation
-- Algorithmic trade recommendations (surface candidates, don't make decisions)
-- SMS/email alerts (in-app only per user preference)
-
----
-
-## Open Design Questions
-
-These were flagged during planning and should be decided before or during early development:
-
-1. **Multi-timeframe analysis** — Do you want the scanner to check both the daily and weekly chart simultaneously? Affects data fetching and indicator storage model.
-
-2. **Scoring vs. binary alerts** — Composite score per ticker (e.g. "3 of 5 bullish") vs. simple pass/fail condition. Score-based ranking is more useful for the screener; binary is simpler for watchlist alerts.
-
-3. **Backtesting** — Even basic outcome logging ("alert fired at $X, price was $Y one week later") needs to be designed into the schema from day one if desired later.
-
-4. **Watchlist grouping** — Simple flat list vs. named groups (e.g. "Active", "Candidates", "Sector: Tech"). Groups are low-effort to build and high-value for organization.
+| Page | Description |
+|---|---|
+| **Watchlist** | Add/remove tickers, assign groups; user-friendly errors for duplicates and missing symbols |
+| **Scanner** | Indicator snapshot table — RSI color-coded, BB squeeze dot, MACD histogram; scheduler status bar (last/next scan, cooldown, pause notice); Run Scan Now button |
+| **Screener** | Run Screener button → async background job with 2s polling; ranked results table with signal dots and score badges |
+| **Charts** | Candlestick + BB/EMA overlays; 1M/3M/6M/1Y/All zoom; candlestick/line toggle; TradingView deep link |
+| **Alerts** | Alert cards with type badges; acknowledge + clear-all; unread count badge in nav |
 
 ---
 
@@ -242,13 +145,11 @@ These were flagged during planning and should be decided before or during early 
 | Service | Tier | Est. Monthly Cost |
 |---|---|---|
 | Vercel (frontend) | Free | $0 |
-| Render.com or EC2 t3.micro (backend) | Starter / free tier | $0–$8 |
+| Render.com (backend) | Starter | ~$7 |
 | Supabase (database) | Free (500MB) | $0 |
 | Twelve Data (market data) | Free (800 req/day) | $0 |
 | yfinance (fallback) | Free (unofficial) | $0 |
-| **Total** | | **$0–$8/mo** |
-
-Well within budget. Room to upgrade Twelve Data to a paid plan (~$29/mo) if real-time data becomes desirable later.
+| **Total** | | **~$7/mo** |
 
 ---
 
@@ -481,41 +382,180 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 9. ⬜ Harden, tune, and deploy
+### 9. ⬜ Deploy to production
+
+Get the app running on Render.com + Vercel and accessible from a real URL.
 
 **Subtasks**
-- [ ] Choose hosting: Render.com starter ($7/mo) vs AWS EC2 t3.micro (~$8/mo)
-- [ ] Set up environment variables on host
-- [ ] Configure Vercel deployment for frontend (`VITE_API_URL` → backend URL)
-- [ ] Add CORS config to FastAPI (allow Vercel domain)
-- [ ] Tune alert conditions against a few weeks of real data
-- [ ] Set up basic error logging (stdout → host log viewer is sufficient)
+- [ ] Add CORS config to FastAPI (allow Vercel domain + localhost for dev)
+- [ ] Add `POST /screener/sync-universe` endpoint so universe can be initialized from the UI on a fresh install
+- [ ] Push backend to GitHub → connect Render.com for auto-deploy from `main`
+- [ ] Set environment variables on Render: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TWELVEDATA_API_KEY`, scheduler knobs
+- [ ] Configure Vercel deployment for frontend: set `VITE_API_URL` → Render backend URL
+- [ ] Set up basic error logging (stdout → Render log viewer is sufficient for now)
+- [ ] Verify scheduler fires at 4PM ET and writes alerts to Supabase
 
 **Testing criteria**
 - Frontend loads from Vercel URL and connects to deployed backend
 - Daily scheduler fires at 4PM ET and produces alerts
 - No credentials in git history or deployed environment
+- Universe sync works from a cold Supabase instance
 
 **Technical notes**
-- Render.com is simpler to deploy than EC2 for a personal project — recommended first choice
-- Backend deploy: push to GitHub → Render auto-deploys from `main` branch
-- CORS: allow `https://<your-vercel-app>.vercel.app` and `http://localhost:5173` (dev)
+- Render.com starter ~$7/mo; auto-deploys from `main` branch on push
+- CORS: `https://<your-vercel-app>.vercel.app` and `http://localhost:5173`
+- Alert condition tuning is split to a later milestone — deploy first, tune with real data
 
-### 10. Public API
-[TODO]
+---
 
-### 11. Claude Skill for public api
-[TODO]
+### 10. ⬜ Authentication and user login
 
-### 12. App User Guide
-- Explain app features and functionality
-- Informs testing and future work
+Secure the app behind a login wall before it's accessible on a public URL. Single-user for now; multi-user deferred until there's a concrete need.
 
-### 13. Integration testing
-[TODO]
+**Goals**
+- Protect the personal instance — no unauthenticated access to any page or API endpoint
+- Keep multi-user as a future option without building it now (small DB migration when needed; not worth the complexity upfront)
 
-### 14. End-to-end testing
-[TODO]
+**Approach**
+- Use Supabase Auth (email/password; OAuth optional)
+- Backend: validate Supabase JWT on all protected endpoints via a FastAPI dependency
+- Frontend: login page, auth context, protected route wrapper, token attached to all `@/lib/api` requests
+- No `user_id` schema changes for now — all users share the same data. If multiple users are needed later, the migration on a small personal DB is straightforward.
 
-### 15. Future work, next features
-[TODO]
+**Subtasks**
+- [ ] Enable Supabase Auth; create first user account
+- [ ] FastAPI auth dependency: validate JWT on all non-health routes
+- [ ] Frontend: `/login` page, auth context provider, redirect unauthenticated users, attach token to API client
+- [ ] Confirm all existing features work end-to-end with auth in place
+
+**Technical notes**
+- Supabase Auth is free and already in the stack — no new service needed
+- Backend continues using the service role key for DB access; JWT validation is the auth gate
+- For shared access (friends/family): share one set of credentials, or add additional Supabase Auth users with the same single-tenant data
+
+---
+
+### 11. ⬜ App User Guide
+
+Document the app for a user who didn't build it — covers setup, daily workflow, and what each feature does. Also serves as reference for LLM tooling and informs integration/E2E test scenarios.
+
+**Subtasks**
+- [ ] First-time setup: clone repo, configure `.env`, sync universe, run screener, add watchlist tickers
+- [ ] Weekly workflow walkthrough: Sunday screener run → pick trades → monitor scanner → act on alerts
+- [ ] Page-by-page feature reference: what each control does, what errors mean, how to recover
+- [ ] Scheduler controls: how to pause, resume, trigger manually, interpret status bar
+- [ ] Alert types: what each condition means and how to interpret it for a trade decision
+- [ ] Troubleshooting: common issues (empty tickers, stale cache, cooldown, etc.)
+
+**Technical notes**
+- Written as a standalone Markdown doc (`docs/user-guide.md` or similar)
+- Should be accurate enough that someone with no codebase knowledge can operate the app
+- Will directly inform E2E test scenarios (milestone 13) and LLM tool descriptions (milestone 14)
+
+---
+
+### 12. ⬜ Integration testing
+
+Test the full backend stack against a real (test) Supabase database — exercises routes, services, and DB together without mocks.
+
+**Subtasks**
+- [ ] Set up a separate Supabase test project (or test schema) with the same schema
+- [ ] Integration test suite: key user flows end-to-end through the API (add watchlist ticker, run screener, trigger scan, check alerts)
+- [ ] CI-friendly: runnable with a single command against the test DB
+
+**Technical notes**
+- Use pytest with a dedicated `.env.test` pointing at the test DB
+- Focus on the seams between services — not re-testing unit logic already covered by existing tests
+- Auth integration tests can be added here once milestone 10 is complete
+
+---
+
+### 13. ⬜ End-to-end testing
+
+Drive the full app in a real browser against a deployed (or local) backend. Validates the complete user experience.
+
+**Subtasks**
+- [ ] Choose framework: Playwright (recommended — good Windows support, works with Vite dev server)
+- [ ] Key scenarios from the user guide: login, add ticker to watchlist, run screener, view results, run scan, view alerts
+- [ ] Run against local stack in CI; optionally against staging on Render
+
+**Technical notes**
+- User guide (milestone 11) defines the test scenarios
+- Can be added incrementally — start with the 3–4 highest-value flows, not exhaustive coverage
+- Auth flows should be included once milestone 10 is complete
+
+---
+
+### 14. ⬜ LLM integrations + Claude skill
+
+Two related features sharing the same Claude/API infrastructure.
+
+**Feature: News summarizer**
+- For each watchlist ticker, fetch recent news headlines (e.g. from a free API like NewsAPI or Twelve Data news endpoint)
+- Pass headlines to Claude with a prompt to identify and summarize events relevant to price action: earnings, guidance, macro, regulatory, geopolitical
+- Surface summaries in the dashboard alongside scanner indicators
+
+**Feature: Trade setup advisor**
+- Input: current indicator snapshot for a ticker + recent alert history + (optionally) past trade outcomes from `trade_log`
+- Output: Claude-generated analysis including suggested entry/exit range, stop loss level, options/hedging considerations, and risks to monitor as the trade unfolds
+- Not a trade executor — surfaces analysis for the user to act on
+
+**Claude MCP skill**
+- Expose key app data (watchlist, alerts, screener results, scanner snapshots) as Claude tool calls via an MCP server
+- Allows querying the app from Claude chat: "What alerts fired today?" / "What does the screener show for NVDA?" / "Summarize my current watchlist positions"
+- Pairs naturally with both LLM features above
+
+**Technical notes**
+- Anthropic SDK (`anthropic` Python package) for Claude API calls
+- MCP server can be a small FastAPI app or standalone process exposing tool definitions
+- News API: NewsAPI.org free tier (100 req/day) or Twelve Data news endpoint (already in stack)
+- User guide (milestone 11) should document how to interpret LLM output — these are suggestions, not instructions
+
+---
+
+### 15. ⬜ Alert condition tuning
+
+Review and adjust alert thresholds based on real data observed after the app has been live for several weeks.
+
+**Subtasks**
+- [ ] Review alert history: which conditions fire most/least, any obvious false positives
+- [ ] Compare alert triggers against subsequent price action (use `trade_log` or manual review)
+- [ ] Adjust thresholds in `scanner.py` if needed (e.g. RSI oversold cutoff, vol expansion multiplier)
+- [ ] Consider enabling/disabling specific conditions based on observed usefulness
+
+**Technical notes**
+- Requires several weeks of live data — do this after the app has been deployed and running
+- This milestone is the manual precursor to the full custom alert rule engine (feature 16)
+
+---
+
+### 16. ⬜ Future work / next features
+
+#### Universe / Ticker Browser
+A dedicated page for browsing and managing the `tickers` table. Key ideas:
+- Search/filter by symbol, sector, avg volume, price range
+- Show watchlist status per ticker (in watchlist or not) with add/remove controls
+- Admin controls: "Sync Universe" button (calls `sync_universe()` + `update_ticker_metadata()`), manual refresh of ticker metadata
+- Ticker detail: basic info panel per symbol (sector, avg volume, last price, data freshness)
+- Out-of-universe lookup: if a symbol isn't in `tickers`, hit a free public API (e.g. Yahoo Finance or Twelve Data) to fetch basic info and offer an "Add to Universe" flow
+- Full design TBD when we're ready to build
+
+#### Custom Alert Rule Engine
+User-defined alert conditions, replacing or extending the hardcoded 6-condition set. Key ideas:
+- Add/remove/toggle alert rules from the UI
+- Rule builder: combine indicator expressions with AND/OR/NOT operators (e.g. `RSI < 35 AND bb_squeeze = true`)
+- Rules and their enabled/disabled state persisted per user
+- Indicator parameter customization (e.g. change RSI period from 14 to 10); saved per user
+- Support for adding new indicator types beyond the current set
+- Full design TBD — schema changes required (new `alert_rules` table, parameterized `indicator_configs`)
+
+#### LLM Integrations
+- **News summarizer**: scan headlines for watchlist tickers and surface relevant events (earnings, macro, geopolitical) that could affect price — summarized by an LLM
+- **Trade setup advisor**: given current indicators + past trade performance, recommend entry/exit prices, stop loss levels, options/hedging strategies, and flag risks to watch as a trade unfolds
+
+#### Other Ideas (to evaluate)
+- **Trade journal + outcome logging**: record entry/exit per trade linked to the alert that triggered it; track P&L and outcome vs. alert prediction — foundational for tuning and backtesting (`trade_log` table schema already exists)
+- **Backtesting**: replay historical OHLCV + indicator snapshots through alert conditions to evaluate rule quality before going live
+- **Multi-timeframe confirmation**: check daily setup against weekly chart before alerting — reduces false positives on shorter-term noise
+- **Portfolio risk view**: position sizing suggestions, correlation between current watchlist holdings, total exposure by sector
+- **Chart indicator toggles**: show/hide individual overlays (BB, EMA 8/21/50) from the chart UI; save preferences

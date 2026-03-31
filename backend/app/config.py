@@ -11,6 +11,14 @@ SUPABASE_ANON_KEY: str = os.environ["SUPABASE_ANON_KEY"]
 TWELVE_DATA_API_KEY: str = os.getenv("TWELVE_DATA_API_KEY", "")
 ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
 
+# CORS — comma-separated list of allowed origins
+# e.g. "https://my-app.vercel.app,http://localhost:5173"
+ALLOWED_ORIGINS: list[str] = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if o.strip()
+]
+
 # Scheduler
 SCHEDULER_ENABLED: bool = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"
 SCHEDULER_HOUR: int = int(os.getenv("SCHEDULER_HOUR", "16"))

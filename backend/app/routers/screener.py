@@ -12,6 +12,7 @@ from app.services.screener import (
     pass1_filter,
     run_screener,
 )
+from app.services.universe import sync_universe, update_ticker_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,22 @@ async def _run_screener_job(job_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.post("/sync-universe", status_code=200)
+async def sync_universe_endpoint():
+    """
+    Sync the S&P 500 universe into the tickers table and update metadata
+    (avg_volume, last_price) from cached OHLCV data.
+    Run this once on a fresh database before using the screener.
+    """
+    count = await asyncio.to_thread(sync_universe)
+    from app.database import get_client
+    symbols_result = get_client().table("tickers").select("symbol").execute()
+    symbols = [r["symbol"] for r in symbols_result.data]
+    await asyncio.to_thread(lambda: update_ticker_metadata(symbols))
+    logger.info("Universe sync complete — %d tickers upserted", count)
+    return {"tickers_upserted": count}
+
 
 @router.post("/run", status_code=202)
 async def trigger_screener_run(background_tasks: BackgroundTasks):

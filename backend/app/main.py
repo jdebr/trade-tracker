@@ -1,8 +1,16 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.config import ALLOWED_ORIGINS
 from app.routers import health, watchlist, ohlcv, indicators, screener, alerts, scheduler
 from app.services.scheduler import start_scheduler, stop_scheduler
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
 
 
 @asynccontextmanager
@@ -16,7 +24,7 @@ app = FastAPI(title="Trade Tracker API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
