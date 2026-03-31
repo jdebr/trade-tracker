@@ -6,13 +6,13 @@ Also updates per-ticker metadata (avg_volume, last_price) from ohlcv_cache
 so that Pass 1 filtering can run without any API calls.
 
 Public API:
-    load_sp500_symbols() -> list[dict]   # fetch from Wikipedia or static CSV
+    load_sp500_symbols() -> list[dict]   # fetch from datahub.io or static CSV fallback
     sync_universe()      -> int          # upsert into tickers; returns row count
     update_ticker_metadata(symbols)      # update avg_volume + last_price from cache
 """
 
 import logging
-import os
+import requests
 from pathlib import Path
 import pandas as pd
 from app.database import get_client
@@ -20,33 +20,37 @@ from app.database import get_client
 logger = logging.getLogger(__name__)
 
 _STATIC_CSV = Path(__file__).parent.parent.parent / "data" / "sp500.csv"
-_WIKIPEDIA_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+_DATAHUB_URL = (
+    "https://pkgstore.datahub.io/core/s-and-p-500-companies"
+    "/constituents_json/data/297344d8dc0a9d86b8d107449c851cc8/constituents_json.json"
+)
+
+
+def _load_from_datahub() -> list[dict]:
+    resp = requests.get(_DATAHUB_URL, timeout=15)
+    resp.raise_for_status()
+    df = pd.DataFrame(resp.json())
+    df = df.rename(columns={"Symbol": "symbol", "Name": "name", "Sector": "sector"})
+    df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)
+    df["is_etf"] = False
+    return df[["symbol", "name", "sector", "is_etf"]].to_dict(orient="records")
 
 
 def load_sp500_symbols() -> list[dict]:
     """
     Return a list of dicts with keys: symbol, name, sector, is_etf.
 
-    Tries Wikipedia first (live, authoritative); falls back to the bundled
+    Tries datahub.io first (reliable JSON API); falls back to the bundled
     static CSV if the network request fails.
+    On a successful fetch, refreshes the static CSV for future fallbacks.
     """
     try:
-        tables = pd.read_html(_WIKIPEDIA_URL, attrs={"id": "constituents"})
-        df = tables[0]
-        # Wikipedia columns: Symbol, Security, GICS Sector, ...
-        df = df.rename(columns={
-            "Symbol":      "symbol",
-            "Security":    "name",
-            "GICS Sector": "sector",
-        })
-        df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)  # BRK.B → BRK-B (yfinance convention)
-        df["is_etf"] = False
-        result = df[["symbol", "name", "sector", "is_etf"]].to_dict(orient="records")
-        logger.info("Loaded %d symbols from Wikipedia", len(result))
-        _refresh_static_csv(df[["symbol", "name", "sector", "is_etf"]])
+        result = _load_from_datahub()
+        logger.info("Loaded %d symbols from datahub.io", len(result))
+        _refresh_static_csv(pd.DataFrame(result))
         return result
     except Exception as exc:
-        logger.warning("Wikipedia fetch failed (%s) — using static CSV", exc)
+        logger.warning("datahub.io fetch failed (%s) — using static CSV", exc)
 
     df = pd.read_csv(_STATIC_CSV)
     df["is_etf"] = df["is_etf"].astype(str).str.lower() == "true"
