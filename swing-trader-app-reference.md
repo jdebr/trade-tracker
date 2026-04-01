@@ -444,7 +444,7 @@ Get the app running on Render.com + Vercel and accessible from a real URL. Data 
 - [x] Saturday prefetch job: fetch OHLCV for all 505 tickers via yfinance; retry failures with Twelve Data; compute indicators; update ticker metadata; run screener and save results
 - [x] Intraday quote poller: yfinance `fast_info` for watchlist tickers at 9:30, 11:00, 12:30, 2:00, 3:30 ET; evaluate price-vs-snapshot alert conditions; insert deduped intraday alerts
 - [x] Pre-market earnings check: daily at 8 AM ET; fetch upcoming earnings (within 5 days) for watchlist tickers; surface as alerts
-- [ ] API usage tracking: expose Twelve Data `/api_usage` in scheduler status bar; gate TD calls if near limit
+- [x] API usage tracking: expose Twelve Data `/api_usage` in scheduler status bar via `get_status()`
 - [x] EOD scan time shifted to 4:15 PM ET (after market close confirmation)
 - [ ] Screener page: make results display read-only; demote Run Screener to admin control
 

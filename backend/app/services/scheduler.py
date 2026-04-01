@@ -40,6 +40,7 @@ from app.config import (
     SCHEDULER_MINUTE,
 )
 from app.services.scanner import ScanResult, run_watchlist_scan
+from app.services.market_data import fetch_td_api_usage
 from app.services.prefetch import run_prefetch_job
 from app.services.intraday import run_intraday_poll
 from app.services.earnings import run_earnings_check
@@ -245,6 +246,7 @@ def get_status() -> dict:
         "cooldown_minutes":               SCAN_COOLDOWN_MINUTES,
         "seconds_until_cooldown_expires": _seconds_until_cooldown_expires(),
         "schedule":                       f"{SCHEDULER_HOUR:02d}:{SCHEDULER_MINUTE:02d} ET Mon–Fri",
+        "td_api_usage":                   fetch_td_api_usage(),
     }
 
 

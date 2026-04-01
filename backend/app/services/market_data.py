@@ -118,6 +118,41 @@ def fetch_from_yfinance(symbol: str, lookback_days: int = DEFAULT_LOOKBACK) -> l
 
 
 # ---------------------------------------------------------------------------
+# API usage
+# ---------------------------------------------------------------------------
+
+def fetch_td_api_usage() -> dict | None:
+    """
+    Fetch current Twelve Data API credit usage for today.
+
+    Returns a dict with keys: current_usage, plan_limit, timestamp
+    Returns None if the key is not configured or the request fails.
+    """
+    if not TWELVE_DATA_API_KEY:
+        return None
+
+    try:
+        response = httpx.get(
+            "https://api.twelvedata.com/api_usage",
+            params={"apikey": TWELVE_DATA_API_KEY},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("status") != "ok":
+            logger.warning("Twelve Data api_usage error: %s", payload.get("message"))
+            return None
+        return {
+            "current_usage": payload.get("current_usage"),
+            "plan_limit":    payload.get("plan_limit"),
+            "timestamp":     payload.get("timestamp"),
+        }
+    except Exception as exc:
+        logger.warning("Could not fetch Twelve Data API usage: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Unified entry point
 # ---------------------------------------------------------------------------
 
