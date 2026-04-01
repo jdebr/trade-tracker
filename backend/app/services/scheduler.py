@@ -41,6 +41,7 @@ from app.config import (
 )
 from app.services.scanner import ScanResult, run_watchlist_scan
 from app.services.prefetch import run_prefetch_job
+from app.services.intraday import run_intraday_poll
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,16 @@ async def prefetch_job() -> None:
         logger.error("Saturday prefetch failed: %s", exc, exc_info=True)
 
 
+async def intraday_job() -> None:
+    """APScheduler cron entry point for the intraday quote poll (5×/day Mon–Fri)."""
+    logger.info("Intraday poll starting")
+    try:
+        summary = await asyncio.to_thread(run_intraday_poll)
+        logger.info("Intraday poll complete: %s", summary)
+    except Exception as exc:
+        logger.error("Intraday poll failed: %s", exc, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Manual trigger
 # ---------------------------------------------------------------------------
@@ -271,8 +282,35 @@ def start_scheduler() -> None:
         misfire_grace_time=7200,
     )
 
+    # Intraday quote poll — Mon–Fri at 9:30, 11:00, 12:30, 14:00, 15:30 ET
+    _intraday_times = [
+        ("intraday_poll_0930", 9,  30),
+        ("intraday_poll_1100", 11,  0),
+        ("intraday_poll_1230", 12, 30),
+        ("intraday_poll_1400", 14,  0),
+        ("intraday_poll_1530", 15, 30),
+    ]
+    for job_id, hour, minute in _intraday_times:
+        _scheduler.add_job(
+            intraday_job,
+            trigger=CronTrigger(
+                day_of_week="mon-fri",
+                hour=hour,
+                minute=minute,
+                timezone="America/New_York",
+            ),
+            id=job_id,
+            name=f"Intraday poll {hour:02d}:{minute:02d} ET",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+        )
+
     _scheduler.start()
-    logger.info("Scheduler started — EOD scan at 16:15 ET (Mon–Fri), universe prefetch Sat 23:00 ET")
+    logger.info(
+        "Scheduler started — EOD scan 16:15 ET (Mon–Fri), "
+        "intraday poll 5× Mon–Fri, universe prefetch Sat 23:00 ET"
+    )
 
 
 def stop_scheduler() -> None:

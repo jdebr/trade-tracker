@@ -257,12 +257,52 @@ def _results_for_run(run_at: str, limit: int) -> list[dict]:
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+def _bootstrap_symbols() -> list[str]:
+    """
+    Return all non-ETF ticker symbols from the tickers table.
+    Used as a fallback when Pass 1 returns nothing (cold-start / no metadata yet).
+    """
+    result = (
+        get_client()
+        .table("tickers")
+        .select("symbol")
+        .eq("is_etf", False)
+        .execute()
+    )
+    return [r["symbol"] for r in result.data]
+
+
+def _fetch_and_compute(symbols: list[str]) -> None:
+    """Fetch OHLCV and compute indicators for a list of symbols."""
+    from app.services.market_data import fetch_ohlcv
+    from app.services.indicators import compute_indicators
+    from app.services.universe import update_ticker_metadata
+
+    for symbol in symbols:
+        try:
+            fetch_ohlcv(symbol)
+        except Exception as exc:
+            logger.warning("OHLCV fetch failed for %s: %s", symbol, exc)
+        try:
+            compute_indicators(symbol)
+        except Exception as exc:
+            logger.warning("Indicator compute failed for %s: %s", symbol, exc)
+
+    try:
+        update_ticker_metadata(symbols)
+    except Exception as exc:
+        logger.warning("Metadata update failed: %s", exc)
+
+
 def run_screener() -> tuple[datetime, list[dict]]:
     """
     Full screener run:
-      1. Pass 1 — filter tickers table
-      2. Pass 2 — score survivors
-      3. Save results to screener_results
+      1. Pass 1 — filter tickers table by volume/price metadata
+         If no metadata exists yet (cold start), fall back to all non-ETF tickers
+         and fetch OHLCV + compute indicators first.
+      2. Fetch OHLCV + compute indicators for Pass 1 survivors (ensures fresh data)
+      3. Pass 2 — score survivors against indicator snapshots
+      4. Save results to screener_results
 
     Returns (run_at, candidates).
     """
@@ -270,8 +310,20 @@ def run_screener() -> tuple[datetime, list[dict]]:
 
     pass1_survivors = pass1_filter()
     if not pass1_survivors:
-        logger.warning("Pass 1 returned no survivors — tickers table may be empty or unpopulated")
-        return run_at, []
+        logger.warning("Pass 1 returned no survivors — attempting cold-start bootstrap")
+        all_symbols = _bootstrap_symbols()
+        if not all_symbols:
+            logger.error("Tickers table is empty — run sync-universe first")
+            return run_at, []
+        logger.info("Cold-start: fetching OHLCV + indicators for %d tickers", len(all_symbols))
+        _fetch_and_compute(all_symbols)
+        pass1_survivors = pass1_filter()
+        if not pass1_survivors:
+            logger.warning("Pass 1 still empty after bootstrap — check OHLCV data")
+            return run_at, []
+
+    # Ensure fresh OHLCV + indicators for Pass 1 survivors before scoring
+    _fetch_and_compute(pass1_survivors)
 
     candidates = pass2_score(pass1_survivors)
     save_results(candidates, run_at)

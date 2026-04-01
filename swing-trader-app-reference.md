@@ -40,7 +40,7 @@ Friday:
 | **Database** | PostgreSQL via Supabase | Free tier (500MB); 7 tables — see schema below |
 | **Market Data** | Twelve Data (primary) + yfinance fallback | 800 req/day free; OHLCV cached in Supabase to minimize API calls |
 | **Indicators** | `pandas-ta` | RSI, MACD, Bollinger Bands, EMA ribbon (8/21/50), ATR, OBV — computed on cached OHLCV |
-| **Scheduler** | APScheduler `AsyncIOScheduler` | In-process; runs at 4PM ET Mon–Fri, skips NYSE holidays |
+| **Scheduler** | APScheduler `AsyncIOScheduler` | In-process; EOD scan 4:15 PM ET Mon–Fri, intraday poll 5× daily, universe prefetch Sat 23:00 ET |
 | **Charts** | TradingView Lightweight Charts v5 | Candlestick + BB/EMA overlays; deep link to TradingView.com |
 | **Hosting (planned)** | Render.com (backend) + Vercel (frontend) | Render starter ~$7/mo; Vercel free |
 
@@ -73,14 +73,27 @@ Friday:
 
 | Mode | Purpose | Trigger | Scope |
 |---|---|---|---|
-| **Screener** | Find new candidates from the full S&P 500 universe | On-demand (user clicks "Run Screener") | ~500 tickers, two-pass filter |
-| **Scanner** | Monitor active watchlist tickers for alert conditions | Scheduled 4PM ET daily (also manual via "Run Scan Now") | Watchlist (10–20 tickers) |
+| **Screener** | Find new candidates from the full S&P 500 universe | Automated Saturday night; manual admin button available | ~505 tickers, two-pass filter |
+| **Scanner** | Monitor active watchlist tickers for EOD alert conditions | Scheduled 4:15 PM ET daily (also manual via "Run Scan Now") | Watchlist (10–20 tickers) |
+| **Intraday poller** | Track watchlist price movement vs. stored indicator levels | Every 1.5 hours during market hours (9:30–3:30 ET) | Watchlist (10–20 tickers) |
+
+### Scheduled Jobs
+
+| Job | Time | Tickers | Data Source | Credits |
+|---|---|---|---|---|
+| Intraday quote poll | 9:30, 11:00, 12:30, 2:00, 3:30 ET (Mon–Fri) | Watchlist (~20) | yfinance `fast_info` | 0 (free) |
+| Pre-market earnings check | 8:00 AM ET (Mon–Fri) | Watchlist (~20) | Twelve Data `/earnings` or yfinance | ~20/day |
+| EOD scan | 4:15 PM ET (Mon–Fri) | Watchlist (~20) | Twelve Data | ~20/day |
+| Universe prefetch + screener | Saturday ~11 PM ET | All 505 tickers | yfinance (TD fallback for failures) | ~0–30/week |
+| **Daily Twelve Data budget** | | | | **~140 used / 800 available** |
 
 ### Screener — Two-Pass Logic
 
-**Pass 1** (static filter, no API cost): avg volume > 1M, price $15–$500, not an ETF → ~150–200 survivors
+The screener reads from pre-populated `ohlcv_cache` and `indicator_snapshots` — it does not fetch data itself. The Saturday prefetch job ensures the full universe is fresh before Sunday review.
 
-**Pass 2** (uses cached OHLCV + indicator snapshots):
+**Pass 1** (DB query only, no API cost): avg volume > 1M, price $15–$500, not an ETF → ~150–200 survivors
+
+**Pass 2** (reads cached indicator snapshots):
 
 | Signal | Condition |
 |---|---|
@@ -89,9 +102,9 @@ Friday:
 | Above EMA 50 | Close price > EMA-50 |
 | Volume expansion | 3-day avg volume > 20-day avg volume |
 
-Each ticker scores 0–4; output is ranked by `signal_score` descending.
+Each ticker scores 0–4; output is ranked by `signal_score` descending. Results are waiting on Sunday morning — no manual run required. A low-key admin button remains available for exceptional re-runs.
 
-### Scanner — Alert Conditions
+### Scanner — EOD Alert Conditions
 
 Six conditions evaluated against each watchlist ticker's latest snapshot (plus prior snapshot for crossovers):
 
@@ -106,22 +119,53 @@ Six conditions evaluated against each watchlist ticker's latest snapshot (plus p
 
 Alerts are deduplicated by `(symbol, alert_type)` per day — fully idempotent.
 
+### Intraday Alert Conditions
+
+Evaluated against current quote price vs. the **last EOD indicator snapshot** (no full recompute needed). Price-level conditions only — RSI/MACD crossovers can't be meaningfully computed from a single quote.
+
+| Condition | Trigger |
+|---|---|
+| `price_below_lower_bb` | Current price < lower BB from last EOD snapshot |
+| `price_above_upper_bb` | Current price > upper BB from last EOD snapshot |
+| `price_below_ema8` | Current price < EMA-8 from last EOD snapshot |
+| `price_above_ema8` | Current price > EMA-8 from last EOD snapshot |
+
+Intraday alerts deduplicated per `(symbol, alert_type)` per calendar day — won't re-alert every 1.5 hours for the same condition.
+
+### Earnings Calendar
+
+Fetched daily at 8 AM ET for watchlist tickers. Surfaces as an alert or dashboard notice when earnings are within 5 days. Useful for deciding whether to hold or exit before an event.
+
+### API Usage Tracking
+
+`GET /api_usage` on Twelve Data returns `current_usage` and `plan_limit`. Surfaced in the scheduler status bar so daily credit consumption is always visible. Used to gate Twelve Data calls: if credits are near exhaustion, fall back to yfinance for that day's scan.
+
 ### Data Flow
 
 ```
-Market Close (4PM ET)                    On-Demand
-        ↓                                      ↓
-APScheduler triggers scan         User clicks "Run Screener"
-        ↓                                      ↓
-FastAPI: fetch OHLCV (Twelve Data / yfinance fallback → cache in Supabase)
-        ↓                                      ↓
-pandas-ta: compute indicators      Pass 1: filter tickers table
-        ↓                                      ↓
-Evaluate 6 alert conditions        Pass 2: score + rank survivors
-        ↓                                      ↓
-Insert deduped alerts              Write screener_results to Supabase
-        ↓                                      ↓
-Dashboard shows alerts + snapshots   Dashboard shows ranked candidates
+Saturday ~11 PM ET                   Mon–Fri 8 AM ET
+        ↓                                   ↓
+yfinance bulk fetch (505 tickers)   Earnings calendar check (watchlist)
+        ↓                                   ↓
+Compute indicators (505 tickers)    Surface upcoming earnings alerts
+        ↓
+Run screener (two-pass)            Mon–Fri 9:30/11:00/12:30/2:00/3:30 ET
+        ↓                                   ↓
+Results ready for Sunday review    Intraday quote poll (watchlist)
+                                            ↓
+                                   Evaluate price-vs-snapshot alerts
+                                            ↓
+                                   Insert deduped intraday alerts
+
+                                   Mon–Fri 4:15 PM ET
+                                            ↓
+                                   EOD scan: fetch OHLCV (Twelve Data)
+                                            ↓
+                                   Compute indicators (watchlist)
+                                            ↓
+                                   Evaluate 6 EOD alert conditions
+                                            ↓
+                                   Insert deduped EOD alerts
 ```
 
 ---
@@ -132,9 +176,9 @@ All pages are implemented and working (Milestones 1–8 complete):
 
 | Page | Description |
 |---|---|
-| **Watchlist** | Add/remove tickers, assign groups; user-friendly errors for duplicates and missing symbols |
+| **Watchlist** | Add/remove tickers with searchable dropdown (universe or screener results filter); assign groups; user-friendly errors |
 | **Scanner** | Indicator snapshot table — RSI color-coded, BB squeeze dot, MACD histogram; scheduler status bar (last/next scan, cooldown, pause notice); Run Scan Now button |
-| **Screener** | Run Screener button → async background job with 2s polling; ranked results table with signal dots and score badges |
+| **Screener** | Read-only results display (auto-populated Saturday night); ranked table with signal dots, score badges, and Add to Watchlist per row; admin re-run button |
 | **Charts** | Candlestick + BB/EMA overlays; 1M/3M/6M/1Y/All zoom; candlestick/line toggle; TradingView deep link |
 | **Alerts** | Alert cards with type badges; acknowledge + clear-all; unread count badge in nav |
 
@@ -384,27 +428,38 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ### 9. ⬜ Deploy to production
 
-Get the app running on Render.com + Vercel and accessible from a real URL.
+Get the app running on Render.com + Vercel and accessible from a real URL. Data pipeline refactored to use automated Saturday prefetch + intraday polling.
 
-**Subtasks**
-- [ ] Add CORS config to FastAPI (allow Vercel domain + localhost for dev)
-- [ ] Add `POST /screener/sync-universe` endpoint so universe can be initialized from the UI on a fresh install
-- [ ] Push backend to GitHub → connect Render.com for auto-deploy from `main`
-- [ ] Set environment variables on Render: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TWELVEDATA_API_KEY`, scheduler knobs
-- [ ] Configure Vercel deployment for frontend: set `VITE_API_URL` → Render backend URL
-- [ ] Set up basic error logging (stdout → Render log viewer is sufficient for now)
-- [ ] Verify scheduler fires at 4PM ET and writes alerts to Supabase
+**Subtasks — Infrastructure (largely complete)**
+- [x] Add CORS config to FastAPI via `ALLOWED_ORIGINS` env var
+- [x] Add `POST /screener/sync-universe` endpoint for fresh install
+- [x] `requirements.txt` and `render.yaml` for Render deploy
+- [x] `.python-version` pinned to 3.12
+- [x] `vercel.json` SPA rewrite for client-side routing
+- [x] Refresh `sp500.csv` to full 505 symbols; replace Wikipedia fetch with datahub.io
+- [ ] Verify Render deploy is stable and scheduler fires at 4:15 PM ET
+- [ ] Confirm Vercel frontend connects to Render backend end-to-end
+
+**Subtasks — Data pipeline redesign**
+- [x] Saturday prefetch job: fetch OHLCV for all 505 tickers via yfinance; retry failures with Twelve Data; compute indicators; update ticker metadata; run screener and save results
+- [x] Intraday quote poller: yfinance `fast_info` for watchlist tickers at 9:30, 11:00, 12:30, 2:00, 3:30 ET; evaluate price-vs-snapshot alert conditions; insert deduped intraday alerts
+- [ ] Pre-market earnings check: daily at 8 AM ET; fetch upcoming earnings (within 5 days) for watchlist tickers; surface as alerts
+- [ ] API usage tracking: expose Twelve Data `/api_usage` in scheduler status bar; gate TD calls if near limit
+- [x] EOD scan time shifted to 4:15 PM ET (after market close confirmation)
+- [ ] Screener page: make results display read-only; demote Run Screener to admin control
 
 **Testing criteria**
-- Frontend loads from Vercel URL and connects to deployed backend
-- Daily scheduler fires at 4PM ET and produces alerts
+- Frontend loads from Vercel URL and connects to Render backend
+- Saturday job runs and screener results are populated by Sunday morning
+- Intraday poller fires on schedule and produces alerts
+- Twelve Data credit usage stays well under 800/day
 - No credentials in git history or deployed environment
-- Universe sync works from a cold Supabase instance
 
 **Technical notes**
-- Render.com starter ~$7/mo; auto-deploys from `main` branch on push
-- CORS: `https://<your-vercel-app>.vercel.app` and `http://localhost:5173`
-- Alert condition tuning is split to a later milestone — deploy first, tune with real data
+- Saturday job uses yfinance for bulk fetch (free, no credits); TD only for individual failures
+- Intraday alerts use last EOD snapshot as baseline — no full indicator recompute needed
+- Earnings check: Twelve Data `/earnings` endpoint or yfinance `Ticker.calendar` (~20 credits/day)
+- `ALLOWED_ORIGINS` on Render: `https://<vercel-app>.vercel.app,http://localhost:5173`
 
 ---
 
@@ -435,7 +490,36 @@ Secure the app behind a login wall before it's accessible on a public URL. Singl
 
 ---
 
-### 11. ⬜ App User Guide
+### 11. ⬜ Deployment testing and polish (V1)
+
+Iterate on the live deployed app — fix rough edges, complete the data pipeline, and ship the UI improvements identified during deployment testing. This is the "V1 complete" milestone.
+
+**Data pipeline**
+- [ ] Saturday prefetch job fully working end-to-end on Render (see milestone 9 subtasks)
+- [ ] Intraday poller working and producing alerts on the live app
+- [ ] Earnings calendar alerts appearing in dashboard
+- [ ] API usage visible in scheduler status bar
+- [ ] Verify Twelve Data credit usage is within budget after a full week of live operation
+
+**Screener page**
+- [ ] Results display is read-only; shows last run timestamp
+- [ ] "Add to Watchlist" button per row in results table
+- [ ] Admin re-run button (low-key, e.g. in a settings dropdown or footer)
+
+**Watchlist page**
+- [ ] Replace free-text symbol input with a searchable dropdown populated from the tickers universe
+- [ ] Dropdown supports text search/filter as you type
+- [ ] Checkbox option to filter dropdown to current screener results only (Sunday candidates)
+- [ ] Free-text still works for symbols not in the universe (with appropriate warning)
+
+**General polish**
+- [ ] Review all pages on mobile — fix any layout issues surfaced during real usage
+- [ ] Confirm all error states and empty states are clear and actionable on the live app
+- [ ] Watchlist FK error ("symbol not in universe") replaced by the new dropdown flow — user can't enter an invalid symbol by accident
+
+---
+
+### 12. ⬜ App User Guide
 
 Document the app for a user who didn't build it — covers setup, daily workflow, and what each feature does. Also serves as reference for LLM tooling and informs integration/E2E test scenarios.
 
@@ -450,11 +534,11 @@ Document the app for a user who didn't build it — covers setup, daily workflow
 **Technical notes**
 - Written as a standalone Markdown doc (`docs/user-guide.md` or similar)
 - Should be accurate enough that someone with no codebase knowledge can operate the app
-- Will directly inform E2E test scenarios (milestone 13) and LLM tool descriptions (milestone 14)
+- Will directly inform E2E test scenarios (milestone 14) and LLM tool descriptions (milestone 15)
 
 ---
 
-### 12. ⬜ Integration testing
+### 13. ⬜ Integration testing
 
 Test the full backend stack against a real (test) Supabase database — exercises routes, services, and DB together without mocks.
 
@@ -470,7 +554,7 @@ Test the full backend stack against a real (test) Supabase database — exercise
 
 ---
 
-### 13. ⬜ End-to-end testing
+### 14. ⬜ End-to-end testing
 
 Drive the full app in a real browser against a deployed (or local) backend. Validates the complete user experience.
 
@@ -486,7 +570,7 @@ Drive the full app in a real browser against a deployed (or local) backend. Vali
 
 ---
 
-### 14. ⬜ LLM integrations + Claude skill
+### 15. ⬜ LLM integrations + Claude skill
 
 Two related features sharing the same Claude/API infrastructure.
 
@@ -513,7 +597,7 @@ Two related features sharing the same Claude/API infrastructure.
 
 ---
 
-### 15. ⬜ Alert condition tuning
+### 16. ⬜ Alert condition tuning
 
 Review and adjust alert thresholds based on real data observed after the app has been live for several weeks.
 
@@ -529,7 +613,7 @@ Review and adjust alert thresholds based on real data observed after the app has
 
 ---
 
-### 16. ⬜ Future work / next features
+### 17. ⬜ Future work / next features
 
 #### Universe / Ticker Browser
 A dedicated page for browsing and managing the `tickers` table. Key ideas:

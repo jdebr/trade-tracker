@@ -6,6 +6,7 @@ httpx==0.28.1
 lxml==5.3.2
 pandas==3.0.1
 pandas-market-calendars==5.3.1.2
+numba==0.60.0
 pandas-ta==0.4.71b0
 pydantic==2.12.5
 python-dotenv==1.2.2
