@@ -1,88 +1,99 @@
 """
-Tests for universe.py — specifically the static CSV refresh behaviour.
+Tests for universe.py — datahub.io fetch and static CSV fallback behaviour.
 """
 
 import csv
-import pytest
+import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+
 import pandas as pd
+import pytest
 
 from app.services.universe import load_sp500_symbols, _STATIC_CSV
 
 
-def _read_csv_symbols() -> set[str]:
-    with open(_STATIC_CSV, newline="") as f:
-        return {row["symbol"] for row in csv.DictReader(f)}
+def _fake_datahub_response(symbols: list[dict]):
+    """Build a mock requests.Response returning the given symbol list as JSON."""
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.return_value = symbols
+    return mock_resp
 
 
-def test_wikipedia_success_refreshes_csv(tmp_path):
+def test_datahub_success_returns_symbols_and_refreshes_csv(tmp_path):
     """
-    When Wikipedia fetch succeeds, the static CSV must be overwritten with
-    the returned symbols.
+    When datahub.io fetch succeeds, the returned symbols are normalised
+    (dot→dash) and the static CSV is refreshed with the new data.
     """
-    # Fake Wikipedia response — 3 symbols not currently in the real CSV
-    fake_df = pd.DataFrame([
-        {"Symbol": "FAKE1", "Security": "Fake Co 1", "GICS Sector": "Technology"},
-        {"Symbol": "FAKE2", "Security": "Fake Co 2", "GICS Sector": "Financials"},
-        {"Symbol": "BRK.B", "Security": "Berkshire Hathaway", "GICS Sector": "Financials"},
-    ])
-
+    fake_data = [
+        {"Symbol": "FAKE1", "Name": "Fake Co 1", "Sector": "Technology"},
+        {"Symbol": "FAKE2", "Name": "Fake Co 2", "Sector": "Financials"},
+        {"Symbol": "BRK.B", "Name": "Berkshire Hathaway", "Sector": "Financials"},
+    ]
     tmp_csv = tmp_path / "sp500.csv"
 
-    with (
-        patch("app.services.universe.pd.read_html", return_value=[fake_df]),
-        patch("app.services.universe._STATIC_CSV", tmp_csv),
-    ):
+    with patch("app.services.universe.requests.get", return_value=_fake_datahub_response(fake_data)), \
+         patch("app.services.universe._STATIC_CSV", tmp_csv):
         result = load_sp500_symbols()
 
-    assert {r["symbol"] for r in result} == {"FAKE1", "FAKE2", "BRK-B"}  # dot→dash normalised
+    assert {r["symbol"] for r in result} == {"FAKE1", "FAKE2", "BRK-B"}
 
-    saved = set()
     with open(tmp_csv, newline="") as f:
         saved = {row["symbol"] for row in csv.DictReader(f)}
-
-    assert saved == {"FAKE1", "FAKE2", "BRK-B"}, (
-        f"CSV not refreshed correctly: {saved}"
-    )
+    assert saved == {"FAKE1", "FAKE2", "BRK-B"}
 
 
-def test_wikipedia_failure_does_not_overwrite_csv(tmp_path):
+def test_datahub_failure_falls_back_to_csv(tmp_path):
     """
-    When Wikipedia fetch fails, the static CSV must be left untouched and
-    its contents returned instead.
+    When datahub.io fetch fails, the static CSV is returned untouched.
     """
-    # Seed a minimal CSV in tmp_path
     tmp_csv = tmp_path / "sp500.csv"
     tmp_csv.write_text("symbol,name,sector,is_etf\nAAPL,Apple,Technology,false\n")
 
-    with (
-        patch("app.services.universe.pd.read_html", side_effect=Exception("network error")),
-        patch("app.services.universe._STATIC_CSV", tmp_csv),
-    ):
+    with patch("app.services.universe.requests.get", side_effect=Exception("network error")), \
+         patch("app.services.universe._STATIC_CSV", tmp_csv):
         result = load_sp500_symbols()
 
     assert [r["symbol"] for r in result] == ["AAPL"]
 
-    # CSV must still contain only AAPL
+    # CSV must be untouched
     with open(tmp_csv, newline="") as f:
         symbols = [row["symbol"] for row in csv.DictReader(f)]
-    assert symbols == ["AAPL"], "CSV was modified despite Wikipedia failure"
+    assert symbols == ["AAPL"]
 
 
 def test_csv_write_failure_does_not_raise():
     """
-    If writing the CSV fails (e.g. read-only filesystem), load_sp500_symbols
-    must still return the Wikipedia data without raising.
+    If writing the refreshed CSV fails (e.g. read-only filesystem),
+    load_sp500_symbols must still return the fetched data without raising.
     """
-    fake_df = pd.DataFrame([
-        {"Symbol": "AAPL", "Security": "Apple", "GICS Sector": "Technology"},
-    ])
+    fake_data = [{"Symbol": "AAPL", "Name": "Apple", "Sector": "Technology"}]
 
-    with (
-        patch("app.services.universe.pd.read_html", return_value=[fake_df]),
-        patch("app.services.universe._STATIC_CSV", Path("/nonexistent/path/sp500.csv")),
-    ):
+    with patch("app.services.universe.requests.get", return_value=_fake_datahub_response(fake_data)), \
+         patch("app.services.universe._STATIC_CSV", Path("/nonexistent/path/sp500.csv")):
         result = load_sp500_symbols()  # must not raise
 
     assert result[0]["symbol"] == "AAPL"
+
+
+def test_dot_to_dash_normalisation():
+    """Symbols with dots (BRK.B) are normalised to dashes (BRK-B)."""
+    fake_data = [{"Symbol": "BRK.B", "Name": "Berkshire", "Sector": "Financials"}]
+
+    with patch("app.services.universe.requests.get", return_value=_fake_datahub_response(fake_data)), \
+         patch("app.services.universe._STATIC_CSV", Path("/nonexistent/path/sp500.csv")):
+        result = load_sp500_symbols()
+
+    assert result[0]["symbol"] == "BRK-B"
+
+
+def test_is_etf_always_false():
+    """All symbols loaded from datahub.io have is_etf=False."""
+    fake_data = [{"Symbol": "AAPL", "Name": "Apple", "Sector": "Technology"}]
+
+    with patch("app.services.universe.requests.get", return_value=_fake_datahub_response(fake_data)), \
+         patch("app.services.universe._STATIC_CSV", Path("/nonexistent/path/sp500.csv")):
+        result = load_sp500_symbols()
+
+    assert result[0]["is_etf"] is False

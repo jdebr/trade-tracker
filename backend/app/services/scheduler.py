@@ -40,6 +40,7 @@ from app.config import (
     SCHEDULER_MINUTE,
 )
 from app.services.scanner import ScanResult, run_watchlist_scan
+from app.services.prefetch import run_prefetch_job
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ async def _run_scan_job() -> ScanResult | None:
 # ---------------------------------------------------------------------------
 
 async def scheduled_job() -> None:
-    """APScheduler cron entry point — checks pause and market holiday."""
+    """APScheduler cron entry point for EOD watchlist scan — checks pause and market holiday."""
     if _is_paused():
         logger.info(
             "Scheduled scan skipped — paused until %s",
@@ -159,6 +160,16 @@ async def scheduled_job() -> None:
 
     logger.info("Scheduled scan starting")
     await _run_scan_job()
+
+
+async def prefetch_job() -> None:
+    """APScheduler cron entry point for the Saturday universe prefetch."""
+    logger.info("Saturday universe prefetch starting")
+    try:
+        summary = await asyncio.to_thread(run_prefetch_job)
+        logger.info("Saturday prefetch complete: %s", summary)
+    except Exception as exc:
+        logger.error("Saturday prefetch failed: %s", exc, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -227,12 +238,14 @@ def start_scheduler() -> None:
         return
 
     _scheduler = AsyncIOScheduler(timezone="America/New_York")
+
+    # EOD watchlist scan — Mon–Fri at 16:15 ET
     _scheduler.add_job(
         scheduled_job,
         trigger=CronTrigger(
             day_of_week="mon-fri",
-            hour=SCHEDULER_HOUR,
-            minute=SCHEDULER_MINUTE,
+            hour=16,
+            minute=15,
             timezone="America/New_York",
         ),
         id="watchlist_scan",
@@ -241,12 +254,25 @@ def start_scheduler() -> None:
         coalesce=True,
         misfire_grace_time=3600,
     )
-    _scheduler.start()
-    logger.info(
-        "Scheduler started — daily scan at %02d:%02d ET (Mon–Fri)",
-        SCHEDULER_HOUR,
-        SCHEDULER_MINUTE,
+
+    # Saturday universe prefetch — runs at 23:00 ET Saturday
+    _scheduler.add_job(
+        prefetch_job,
+        trigger=CronTrigger(
+            day_of_week="sat",
+            hour=23,
+            minute=0,
+            timezone="America/New_York",
+        ),
+        id="universe_prefetch",
+        name="Saturday universe prefetch",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=7200,
     )
+
+    _scheduler.start()
+    logger.info("Scheduler started — EOD scan at 16:15 ET (Mon–Fri), universe prefetch Sat 23:00 ET")
 
 
 def stop_scheduler() -> None:
