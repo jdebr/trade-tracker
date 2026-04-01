@@ -446,7 +446,7 @@ Get the app running on Render.com + Vercel and accessible from a real URL. Data 
 - [x] Pre-market earnings check: daily at 8 AM ET; fetch upcoming earnings (within 5 days) for watchlist tickers; surface as alerts
 - [x] API usage tracking: `fetch_td_api_usage()` in `market_data.py`; exposed via `get_status()` response
 - [x] EOD scan time shifted to 4:15 PM ET (after market close confirmation)
-- [ ] Screener page: make results display read-only; demote Run Screener to admin control
+- [x] Screener page: results display is read-only with last-run timestamp; Run Screener demoted to hidden admin toggle
 
 **Testing criteria**
 - [ ] Frontend loads from Vercel URL and connects to Render backend

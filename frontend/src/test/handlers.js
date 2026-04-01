@@ -2,31 +2,33 @@ import { http, HttpResponse } from "msw"
 
 const API_URL = "http://localhost:8000"
 
+const MOCK_RUN_AT = "2026-03-28T20:00:00Z"
+
 export const MOCK_SCREENER_RESULTS = [
   {
-    symbol: "AAPL", rank: 1, signal_score: 4, close_price: 213.49,
+    symbol: "AAPL", rank: 1, signal_score: 4, close_price: 213.49, run_at: MOCK_RUN_AT,
     bb_squeeze: true,  rsi_in_range: true,  above_ema50: true,  volume_expansion: true,
   },
   {
-    symbol: "MSFT", rank: 2, signal_score: 3, close_price: 425.00,
+    symbol: "MSFT", rank: 2, signal_score: 3, close_price: 425.00, run_at: MOCK_RUN_AT,
     bb_squeeze: true,  rsi_in_range: true,  above_ema50: true,  volume_expansion: false,
   },
   {
-    symbol: "NVDA", rank: 3, signal_score: 2, close_price: 118.20,
+    symbol: "NVDA", rank: 3, signal_score: 2, close_price: 118.20, run_at: MOCK_RUN_AT,
     bb_squeeze: true,  rsi_in_range: true,  above_ema50: false, volume_expansion: false,
   },
   {
-    symbol: "JPM",  rank: 4, signal_score: 1, close_price: 240.10,
+    symbol: "JPM",  rank: 4, signal_score: 1, close_price: 240.10, run_at: MOCK_RUN_AT,
     bb_squeeze: false, rsi_in_range: false, above_ema50: true,  volume_expansion: false,
   },
   {
-    symbol: "XOM",  rank: 5, signal_score: 0, close_price: 110.55,
+    symbol: "XOM",  rank: 5, signal_score: 0, close_price: 110.55, run_at: MOCK_RUN_AT,
     bb_squeeze: false, rsi_in_range: false, above_ema50: false, volume_expansion: false,
   },
 ]
 
 export const MOCK_RUN_RESPONSE = {
-  run_at: "2026-03-28T20:00:00Z",
+  run_at: MOCK_RUN_AT,
   pass1_count: 380,
   pass2_count: 5,
   candidates: MOCK_SCREENER_RESULTS,

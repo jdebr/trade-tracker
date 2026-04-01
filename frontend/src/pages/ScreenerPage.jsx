@@ -150,15 +150,34 @@ function ResultsCards({ rows }) {
 }
 
 // ---------------------------------------------------------------------------
-// Run metadata bar
+// Admin re-run panel (hidden by default)
 // ---------------------------------------------------------------------------
 
-function RunMeta({ runAt, pass1Count, pass2Count }) {
+function AdminPanel({ onRun, isRunning, runError, runButtonLabel }) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-3">
-      {runAt && <span>Run: {fmtRunAt(runAt)}</span>}
-      {pass1Count != null && <span>Pass 1: {pass1Count} candidates</span>}
-      {pass2Count != null && <span>Pass 2: {pass2Count} with signals</span>}
+    <div className="mt-6 text-right">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+      >
+        admin
+      </button>
+      {open && (
+        <div className="mt-2 inline-flex flex-col items-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onRun}
+            disabled={isRunning}
+          >
+            {runButtonLabel}
+          </Button>
+          {runError && (
+            <p className="text-xs text-destructive max-w-xs text-right">{runError}</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -170,7 +189,7 @@ function RunMeta({ runAt, pass1Count, pass2Count }) {
 export default function ScreenerPage() {
   const queryClient = useQueryClient()
   const [jobId,    setJobId]    = useState(null)
-  const [runMeta,  setRunMeta]  = useState(null)   // {run_at, pass1_count, pass2_count}
+  const [runMeta,  setRunMeta]  = useState(null)
   const [runError, setRunError] = useState(null)
 
   // ---- Existing results ----
@@ -218,28 +237,24 @@ export default function ScreenerPage() {
 
   const isRunning = isStarting || (!!jobId && jobStatus?.status !== "done" && jobStatus?.status !== "error")
 
-  const runButtonLabel = isStarting
-    ? "Starting…"
-    : isRunning
-    ? "Running…"
-    : "Run Screener"
+  const runButtonLabel = isStarting ? "Starting…" : isRunning ? "Running…" : "Re-run Screener"
+
+  // Derive last run timestamp from results
+  const lastRunAt = results?.[0]?.run_at ?? null
 
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Screener</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">
-            Two-pass S&amp;P 500 signal scanner
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold">Screener</h1>
+        <p className="text-muted-foreground text-sm mt-0.5">
+          S&amp;P 500 candidates — refreshed automatically every Saturday night
+        </p>
+        {lastRunAt && (
+          <p className="text-xs text-muted-foreground mt-1">
+            Last run: {fmtRunAt(lastRunAt)}
           </p>
-        </div>
-        <Button
-          onClick={() => startRun()}
-          disabled={isRunning}
-        >
-          {runButtonLabel}
-        </Button>
+        )}
       </div>
 
       {/* Progress message while running */}
@@ -254,25 +269,15 @@ export default function ScreenerPage() {
         </div>
       )}
 
-      {/* Run error */}
-      {runError && (
-        <div
-          role="alert"
-          className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-        >
-          {runError}
-        </div>
-      )}
-
       {/* Results */}
       {isLoading && <ResultsSkeleton />}
 
-      {!isLoading && isError && (
+      {!isLoading && (isError || (results && results.length === 0)) && (
         <div
-          role="alert"
+          role="status"
           className="mt-4 rounded-lg border border-border bg-muted/50 px-4 py-8 text-center text-muted-foreground"
         >
-          No screener results yet. Click <strong>Run Screener</strong> to generate results.
+          No screener results yet — the screener runs automatically every Saturday night.
         </div>
       )}
 
@@ -281,20 +286,21 @@ export default function ScreenerPage() {
           <ResultsTable rows={results} />
           <ResultsCards rows={results} />
           {runMeta && (
-            <RunMeta
-              runAt={runMeta.run_at}
-              pass1Count={runMeta.pass1_count}
-              pass2Count={runMeta.pass2_count}
-            />
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-3">
+              {runMeta.run_at    && <span>Run: {fmtRunAt(runMeta.run_at)}</span>}
+              {runMeta.pass1_count != null && <span>Pass 1: {runMeta.pass1_count} candidates</span>}
+              {runMeta.pass2_count != null && <span>Pass 2: {runMeta.pass2_count} with signals</span>}
+            </div>
           )}
         </>
       )}
 
-      {results && results.length === 0 && (
-        <div className="mt-4 rounded-lg border border-border bg-muted/50 px-4 py-8 text-center text-muted-foreground">
-          No candidates matched the filters. Try running the screener again on a different day.
-        </div>
-      )}
+      <AdminPanel
+        onRun={() => startRun()}
+        isRunning={isRunning}
+        runError={runError}
+        runButtonLabel={runButtonLabel}
+      />
     </div>
   )
 }
