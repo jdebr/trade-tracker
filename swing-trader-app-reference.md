@@ -426,7 +426,7 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 9. ⬜ Deploy to production
+### 9. 🔄 Deploy to production
 
 Get the app running on Render.com + Vercel and accessible from a real URL. Data pipeline refactored to use automated Saturday prefetch + intraday polling.
 
@@ -444,22 +444,23 @@ Get the app running on Render.com + Vercel and accessible from a real URL. Data 
 - [x] Saturday prefetch job: fetch OHLCV for all 505 tickers via yfinance; retry failures with Twelve Data; compute indicators; update ticker metadata; run screener and save results
 - [x] Intraday quote poller: yfinance `fast_info` for watchlist tickers at 9:30, 11:00, 12:30, 2:00, 3:30 ET; evaluate price-vs-snapshot alert conditions; insert deduped intraday alerts
 - [x] Pre-market earnings check: daily at 8 AM ET; fetch upcoming earnings (within 5 days) for watchlist tickers; surface as alerts
-- [x] API usage tracking: expose Twelve Data `/api_usage` in scheduler status bar via `get_status()`
+- [x] API usage tracking: `fetch_td_api_usage()` in `market_data.py`; exposed via `get_status()` response
 - [x] EOD scan time shifted to 4:15 PM ET (after market close confirmation)
 - [ ] Screener page: make results display read-only; demote Run Screener to admin control
 
 **Testing criteria**
-- Frontend loads from Vercel URL and connects to Render backend
-- Saturday job runs and screener results are populated by Sunday morning
-- Intraday poller fires on schedule and produces alerts
-- Twelve Data credit usage stays well under 800/day
-- No credentials in git history or deployed environment
+- [ ] Frontend loads from Vercel URL and connects to Render backend
+- [ ] Saturday job runs and screener results are populated by Sunday morning
+- [ ] Intraday poller fires on schedule and produces alerts
+- [ ] Twelve Data credit usage stays well under 800/day
+- [ ] No credentials in git history or deployed environment
 
 **Technical notes**
 - Saturday job uses yfinance for bulk fetch (free, no credits); TD only for individual failures
 - Intraday alerts use last EOD snapshot as baseline — no full indicator recompute needed
-- Earnings check: Twelve Data `/earnings` endpoint or yfinance `Ticker.calendar` (~20 credits/day)
-- `ALLOWED_ORIGINS` on Render: `https://<vercel-app>.vercel.app,http://localhost:5173`
+- Earnings check uses `yfinance.Ticker.calendar` (free, no TD credits)
+- Intraday quote poll uses `yfinance.fast_info` (free, no TD credits)
+- `ALLOWED_ORIGINS` on Render: `https://trade-tracker-blush.vercel.app,http://localhost:5173`
 
 ---
 
