@@ -42,6 +42,7 @@ from app.config import (
 from app.services.scanner import ScanResult, run_watchlist_scan
 from app.services.prefetch import run_prefetch_job
 from app.services.intraday import run_intraday_poll
+from app.services.earnings import run_earnings_check
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,16 @@ async def intraday_job() -> None:
         logger.error("Intraday poll failed: %s", exc, exc_info=True)
 
 
+async def earnings_job() -> None:
+    """APScheduler cron entry point for the pre-market earnings check (Mon–Fri 8:00 ET)."""
+    logger.info("Pre-market earnings check starting")
+    try:
+        summary = await asyncio.to_thread(run_earnings_check)
+        logger.info("Earnings check complete: %s", summary)
+    except Exception as exc:
+        logger.error("Earnings check failed: %s", exc, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Manual trigger
 # ---------------------------------------------------------------------------
@@ -280,6 +291,22 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=7200,
+    )
+
+    # Pre-market earnings check — Mon–Fri at 8:00 ET
+    _scheduler.add_job(
+        earnings_job,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour=8,
+            minute=0,
+            timezone="America/New_York",
+        ),
+        id="earnings_check",
+        name="Pre-market earnings check",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
     )
 
     # Intraday quote poll — Mon–Fri at 9:30, 11:00, 12:30, 14:00, 15:30 ET
