@@ -1,5 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { AuthProvider } from "@/context/AuthContext"
+import ProtectedRoute from "@/components/ProtectedRoute"
 import Layout from "@/components/layout/Layout"
+import LoginPage     from "@/pages/LoginPage"
 import ScreenerPage  from "@/pages/ScreenerPage"
 import WatchlistPage from "@/pages/WatchlistPage"
 import ScannerPage   from "@/pages/ScannerPage"
@@ -16,18 +19,21 @@ function NotFoundPage() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route index element={<Navigate to="/screener" replace />} />
-          <Route path="/screener"  element={<ScreenerPage />}  />
-          <Route path="/scanner"   element={<ScannerPage />}   />
-          <Route path="/watchlist" element={<WatchlistPage />} />
-          <Route path="/chart"     element={<ChartPage />}     />
-          <Route path="/alerts"    element={<AlertsPage />}    />
-          <Route path="*"          element={<NotFoundPage />}  />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+            <Route index element={<Navigate to="/screener" replace />} />
+            <Route path="/screener"  element={<ScreenerPage />}  />
+            <Route path="/scanner"   element={<ScannerPage />}   />
+            <Route path="/watchlist" element={<WatchlistPage />} />
+            <Route path="/chart"     element={<ChartPage />}     />
+            <Route path="/alerts"    element={<AlertsPage />}    />
+            <Route path="*"          element={<NotFoundPage />}  />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   )
 }
