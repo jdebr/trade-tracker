@@ -1,17 +1,21 @@
 """
-Tests for the Saturday universe prefetch job.
+Tests for the data refresh pipeline (app/services/prefetch.py) and scheduler
+registration (app/services/scheduler.py).
 
 Criteria:
  1. fetch_bulk_yfinance returns a success list and a failure list
  2. fetch_bulk_yfinance failure list contains symbols that raised exceptions
  3. fetch_bulk_with_fallback calls Twelve Data only for yfinance failures
  4. fetch_bulk_with_fallback TD failures are collected separately (not aborted)
- 5. run_prefetch_job fetches OHLCV → computes indicators → updates metadata → runs screener, in order
- 6. run_prefetch_job with no tickers logs an error and returns early
- 7. run_prefetch_job returns a summary dict with the expected keys
- 8. run_prefetch_job continues past partial fetch failures (doesn't abort)
- 9. Scheduler registers a Saturday cron job named "universe_prefetch"
-10. EOD scan job is registered at hour=16, minute=15
+ 5. run_data_refresh fetches OHLCV → computes indicators → updates metadata, in order
+ 6. run_data_refresh with no tickers logs an error and returns early
+ 7. run_data_refresh returns a summary dict with the expected keys
+ 8. run_data_refresh continues past partial fetch failures (doesn't abort)
+ 9. run_data_refresh skips fresh symbols (bulk_check_freshness)
+10. run_data_refresh with force=True fetches all symbols regardless of freshness
+11. Scheduler registers a Saturday cron job named "universe_prefetch"
+12. EOD scan job is registered at hour=16, minute=15
+13. prefetch_job() calls run_data_refresh then run_screener in order
 """
 
 from unittest.mock import MagicMock, patch, call
@@ -103,88 +107,73 @@ def test_fetch_bulk_with_fallback_td_failure_collected():
 
 
 # ---------------------------------------------------------------------------
-# 5. run_prefetch_job calls steps in the right order
+# 5. run_data_refresh calls steps in the right order
 # ---------------------------------------------------------------------------
 
-def test_run_prefetch_job_calls_steps_in_order():
-    from app.services.prefetch import run_prefetch_job
+def test_run_data_refresh_calls_steps_in_order():
+    from app.services.prefetch import run_data_refresh
 
     call_order = []
 
-    def fake_get_symbols():
-        return ["AAPL", "MSFT"]
-
-    def fake_fetch_bulk(symbols, lookback_days=100):
-        call_order.append("fetch")
-        return (["AAPL", "MSFT"], [])
-
-    def fake_compute(symbol):
-        call_order.append(f"compute:{symbol}")
-        return {}
-
-    def fake_update_metadata(symbols):
-        call_order.append("metadata")
-
-    def fake_run_screener():
-        call_order.append("screener")
-        from datetime import datetime, timezone
-        return datetime.now(timezone.utc), []
-
-    with patch("app.services.prefetch._get_all_ticker_symbols", fake_get_symbols), \
-         patch("app.services.prefetch.fetch_bulk_with_fallback", fake_fetch_bulk), \
-         patch("app.services.prefetch.compute_indicators", fake_compute), \
-         patch("app.services.prefetch.update_ticker_metadata", fake_update_metadata), \
-         patch("app.services.prefetch.run_screener", fake_run_screener):
-        run_prefetch_job()
+    with patch("app.services.prefetch._get_all_ticker_symbols", return_value=["AAPL", "MSFT"]), \
+         patch("app.services.prefetch.bulk_check_freshness", return_value={"AAPL": False, "MSFT": False}), \
+         patch("app.services.prefetch.fetch_bulk_with_fallback",
+               side_effect=lambda s, **kw: call_order.append("fetch") or (list(s), [])), \
+         patch("app.services.prefetch.compute_indicators",
+               side_effect=lambda sym: call_order.append(f"compute:{sym}") or {}), \
+         patch("app.services.prefetch.update_ticker_metadata",
+               side_effect=lambda s: call_order.append("metadata")):
+        run_data_refresh()
 
     assert call_order[0] == "fetch"
     assert "compute:AAPL" in call_order
     assert "compute:MSFT" in call_order
     assert call_order.index("metadata") > call_order.index("compute:AAPL")
-    assert call_order[-1] == "screener"
+    # Screener is NOT called inside run_data_refresh
+    assert "screener" not in call_order
 
 
 # ---------------------------------------------------------------------------
-# 6. run_prefetch_job with empty tickers table exits early
+# 6. run_data_refresh with empty tickers table exits early
 # ---------------------------------------------------------------------------
 
-def test_run_prefetch_job_empty_tickers_exits_early():
-    from app.services.prefetch import run_prefetch_job
+def test_run_data_refresh_empty_tickers_exits_early():
+    from app.services.prefetch import run_data_refresh
 
     fetch_mock = MagicMock()
 
     with patch("app.services.prefetch._get_all_ticker_symbols", return_value=[]), \
          patch("app.services.prefetch.fetch_bulk_with_fallback", fetch_mock):
-        result = run_prefetch_job()
+        result = run_data_refresh()
 
     fetch_mock.assert_not_called()
-    assert result["tickers_attempted"] == 0
+    assert result["attempted"] == 0
 
 
 # ---------------------------------------------------------------------------
-# 7. run_prefetch_job returns summary dict with expected keys
+# 7. run_data_refresh returns summary dict with expected keys
 # ---------------------------------------------------------------------------
 
-def test_run_prefetch_job_returns_summary():
-    from app.services.prefetch import run_prefetch_job
+def test_run_data_refresh_returns_summary():
+    from app.services.prefetch import run_data_refresh
 
     with patch("app.services.prefetch._get_all_ticker_symbols", return_value=["AAPL"]), \
+         patch("app.services.prefetch.bulk_check_freshness", return_value={"AAPL": False}), \
          patch("app.services.prefetch.fetch_bulk_with_fallback", return_value=(["AAPL"], [])), \
          patch("app.services.prefetch.compute_indicators", return_value={}), \
-         patch("app.services.prefetch.update_ticker_metadata"), \
-         patch("app.services.prefetch.run_screener", return_value=(MagicMock(), [])):
-        result = run_prefetch_job()
+         patch("app.services.prefetch.update_ticker_metadata"):
+        result = run_data_refresh()
 
-    for key in ("tickers_attempted", "fetched", "failed", "screener_candidates"):
+    for key in ("attempted", "fetched", "skipped_fresh", "failed", "elapsed_seconds"):
         assert key in result, f"Missing key: {key}"
 
 
 # ---------------------------------------------------------------------------
-# 8. run_prefetch_job continues past partial failures
+# 8. run_data_refresh continues past partial failures
 # ---------------------------------------------------------------------------
 
-def test_run_prefetch_job_continues_past_partial_failures():
-    from app.services.prefetch import run_prefetch_job
+def test_run_data_refresh_continues_past_partial_failures():
+    from app.services.prefetch import run_data_refresh
 
     compute_calls = []
 
@@ -195,19 +184,67 @@ def test_run_prefetch_job_continues_past_partial_failures():
         return {}
 
     with patch("app.services.prefetch._get_all_ticker_symbols", return_value=["AAPL", "BAD", "MSFT"]), \
-         patch("app.services.prefetch.fetch_bulk_with_fallback", return_value=(["AAPL", "BAD", "MSFT"], [])), \
+         patch("app.services.prefetch.bulk_check_freshness",
+               return_value={"AAPL": False, "BAD": False, "MSFT": False}), \
+         patch("app.services.prefetch.fetch_bulk_with_fallback",
+               return_value=(["AAPL", "BAD", "MSFT"], [])), \
          patch("app.services.prefetch.compute_indicators", side_effect=fake_compute), \
-         patch("app.services.prefetch.update_ticker_metadata"), \
-         patch("app.services.prefetch.run_screener", return_value=(MagicMock(), [])):
-        result = run_prefetch_job()
+         patch("app.services.prefetch.update_ticker_metadata"):
+        result = run_data_refresh()
 
-    # All three symbols were attempted despite BAD failing
     assert set(compute_calls) == {"AAPL", "BAD", "MSFT"}
     assert result["fetched"] == 3
 
 
 # ---------------------------------------------------------------------------
-# 9. Scheduler registers a Saturday prefetch job
+# 9. run_data_refresh skips fresh symbols
+# ---------------------------------------------------------------------------
+
+def test_run_data_refresh_skips_fresh_symbols():
+    from app.services.prefetch import run_data_refresh
+
+    freshness = {"AAPL": True, "MSFT": False, "NVDA": True}  # MSFT is stale
+    fetch_mock = MagicMock(return_value=(["MSFT"], []))
+
+    with patch("app.services.prefetch._get_all_ticker_symbols", return_value=["AAPL", "MSFT", "NVDA"]), \
+         patch("app.services.prefetch.bulk_check_freshness", return_value=freshness), \
+         patch("app.services.prefetch.fetch_bulk_with_fallback", fetch_mock), \
+         patch("app.services.prefetch.compute_indicators"), \
+         patch("app.services.prefetch.update_ticker_metadata"):
+        result = run_data_refresh()
+
+    # Only the stale symbol was passed to fetch
+    fetched_symbols = fetch_mock.call_args[0][0]
+    assert fetched_symbols == ["MSFT"]
+    assert result["skipped_fresh"] == 2
+    assert result["attempted"] == 3
+
+
+# ---------------------------------------------------------------------------
+# 10. run_data_refresh force=True bypasses freshness check
+# ---------------------------------------------------------------------------
+
+def test_run_data_refresh_force_bypasses_freshness():
+    from app.services.prefetch import run_data_refresh
+
+    freshness = {"AAPL": True, "MSFT": True}  # Both fresh
+    fetch_mock = MagicMock(return_value=(["AAPL", "MSFT"], []))
+
+    with patch("app.services.prefetch._get_all_ticker_symbols", return_value=["AAPL", "MSFT"]), \
+         patch("app.services.prefetch.bulk_check_freshness", return_value=freshness), \
+         patch("app.services.prefetch.fetch_bulk_with_fallback", fetch_mock), \
+         patch("app.services.prefetch.compute_indicators"), \
+         patch("app.services.prefetch.update_ticker_metadata"):
+        result = run_data_refresh(force=True)
+
+    # All symbols fetched despite being fresh
+    fetched_symbols = fetch_mock.call_args[0][0]
+    assert set(fetched_symbols) == {"AAPL", "MSFT"}
+    assert result["skipped_fresh"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 11. Scheduler registers a Saturday prefetch job
 # ---------------------------------------------------------------------------
 
 import asyncio
@@ -225,7 +262,7 @@ def test_scheduler_registers_saturday_prefetch_job():
 
 
 # ---------------------------------------------------------------------------
-# 10. EOD scan job registered at 16:15
+# 12. EOD scan job registered at 16:15
 # ---------------------------------------------------------------------------
 
 def test_eod_scan_job_registered_at_16_15():
@@ -241,3 +278,33 @@ def test_eod_scan_job_registered_at_16_15():
         sched_svc._scheduler = None
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# 13. prefetch_job() calls run_data_refresh then run_screener in order
+# ---------------------------------------------------------------------------
+
+def test_prefetch_job_calls_refresh_then_screener():
+    """The Saturday prefetch_job should call run_data_refresh first, then run_screener."""
+    call_order = []
+
+    from datetime import datetime, timezone
+
+    def fake_refresh(**kwargs):
+        call_order.append("refresh")
+        return {"attempted": 2, "fetched": 2, "skipped_fresh": 0, "failed": 0, "elapsed_seconds": 1}
+
+    def fake_screener():
+        call_order.append("screener")
+        return datetime.now(timezone.utc), []
+
+    async def run():
+        with patch("app.services.scheduler.run_data_refresh", side_effect=fake_refresh), \
+             patch("app.services.scheduler.run_screener", side_effect=fake_screener):
+            await sched_svc.prefetch_job()
+
+    asyncio.run(run())
+
+    assert "refresh" in call_order
+    assert "screener" in call_order
+    assert call_order.index("refresh") < call_order.index("screener")

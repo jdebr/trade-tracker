@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.models.screener import ScreenerCandidate, ScreenerRunResponse, ScreenerResultRow
 from app.services import screener_job as jobs
+from app.services.prefetch import run_data_refresh
 from app.services.screener import (
     get_latest_results,
     get_results_by_run,
@@ -42,6 +43,18 @@ async def _run_screener_job(job_id: str) -> None:
         jobs.set_error(job_id, str(exc))
 
 
+async def _run_data_refresh_job(job_id: str, force: bool) -> None:
+    """Run data refresh in a thread and update job state on completion."""
+    jobs.set_running(job_id)
+    try:
+        summary = await asyncio.to_thread(lambda: run_data_refresh(force=force))
+        jobs.set_done(job_id, summary)
+        logger.info("Data refresh job %s done: %s", job_id, summary)
+    except Exception as exc:
+        logger.error("Data refresh job %s failed: %s", job_id, exc, exc_info=True)
+        jobs.set_error(job_id, str(exc))
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -71,6 +84,25 @@ async def trigger_screener_run(background_tasks: BackgroundTasks):
     """
     job_id = jobs.create_job()
     background_tasks.add_task(_run_screener_job, job_id)
+    return {"job_id": job_id, "status": jobs.JOB_STATUS_PENDING}
+
+
+@router.post("/refresh-data", status_code=202)
+async def trigger_data_refresh(
+    background_tasks: BackgroundTasks,
+    force: bool = Query(False, description="Fetch all symbols even if cache is fresh"),
+):
+    """
+    Start an async data refresh job (OHLCV fetch → indicators → metadata).
+
+    Use this to seed the database on first deploy or to force a refresh outside
+    the Saturday schedule.  Pass ?force=true to bypass freshness checks.
+
+    Poll GET /screener/job/{job_id} until status is "done" or "error".
+    Typical run time: several minutes for a full 500-symbol refresh.
+    """
+    job_id = jobs.create_job()
+    background_tasks.add_task(_run_data_refresh_job, job_id, force)
     return {"job_id": job_id, "status": jobs.JOB_STATUS_PENDING}
 
 

@@ -150,10 +150,10 @@ function ResultsCards({ rows }) {
 }
 
 // ---------------------------------------------------------------------------
-// Admin re-run panel (hidden by default)
+// Admin panel — hidden by default, for data refresh
 // ---------------------------------------------------------------------------
 
-function AdminPanel({ onRun, isRunning, runError, runButtonLabel }) {
+function AdminPanel({ onRefresh, isRefreshing, refreshError, refreshButtonLabel, refreshMeta }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-6 text-right">
@@ -168,13 +168,21 @@ function AdminPanel({ onRun, isRunning, runError, runButtonLabel }) {
           <Button
             size="sm"
             variant="outline"
-            onClick={onRun}
-            disabled={isRunning}
+            onClick={onRefresh}
+            disabled={isRefreshing}
           >
-            {runButtonLabel}
+            {refreshButtonLabel}
           </Button>
-          {runError && (
-            <p className="text-xs text-destructive max-w-xs text-right">{runError}</p>
+          {refreshError && (
+            <p className="text-xs text-destructive max-w-xs text-right">{refreshError}</p>
+          )}
+          {refreshMeta && (
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {refreshMeta.attempted != null && <span>Attempted: {refreshMeta.attempted}</span>}
+              {refreshMeta.fetched    != null && <span>Fetched: {refreshMeta.fetched}</span>}
+              {refreshMeta.skipped_fresh != null && <span>Skipped (fresh): {refreshMeta.skipped_fresh}</span>}
+              {refreshMeta.failed     != null && <span>Failed: {refreshMeta.failed}</span>}
+            </div>
           )}
         </div>
       )}
@@ -188,9 +196,16 @@ function AdminPanel({ onRun, isRunning, runError, runButtonLabel }) {
 
 export default function ScreenerPage() {
   const queryClient = useQueryClient()
-  const [jobId,    setJobId]    = useState(null)
-  const [runMeta,  setRunMeta]  = useState(null)
-  const [runError, setRunError] = useState(null)
+
+  // ---- Screener run state ----
+  const [screenJobId,    setScreenJobId]    = useState(null)
+  const [screenError,    setScreenError]    = useState(null)
+  const [screenMeta,     setScreenMeta]     = useState(null)
+
+  // ---- Data refresh state ----
+  const [refreshJobId,   setRefreshJobId]   = useState(null)
+  const [refreshError,   setRefreshError]   = useState(null)
+  const [refreshMeta,    setRefreshMeta]    = useState(null)
 
   // ---- Existing results ----
   const { data: results, isLoading, isError } = useQuery({
@@ -199,73 +214,128 @@ export default function ScreenerPage() {
     retry: false,
   })
 
-  // ---- Trigger run → get job_id ----
-  const { mutate: startRun, isPending: isStarting } = useMutation({
+  // ---- Trigger screener run ----
+  const { mutate: startScreen, isPending: isStartingScreen } = useMutation({
     mutationFn: () => api.post("/screener/run"),
     onSuccess: ({ job_id }) => {
-      setJobId(job_id)
-      setRunError(null)
+      setScreenJobId(job_id)
+      setScreenError(null)
+      setScreenMeta(null)
     },
-    onError: (err) => {
-      setRunError(`Failed to start screener: ${err.message}`)
-    },
+    onError: (err) => setScreenError(`Failed to start screener: ${err.message}`),
   })
 
-  // ---- Poll job status while jobId is set ----
-  const { data: jobStatus } = useQuery({
-    queryKey: ["screener-job", jobId],
-    queryFn: () => api.get(`/screener/job/${jobId}`),
-    enabled: !!jobId,
+  // ---- Trigger data refresh ----
+  const { mutate: startRefresh, isPending: isStartingRefresh } = useMutation({
+    mutationFn: () => api.post("/screener/refresh-data"),
+    onSuccess: ({ job_id }) => {
+      setRefreshJobId(job_id)
+      setRefreshError(null)
+      setRefreshMeta(null)
+    },
+    onError: (err) => setRefreshError(`Failed to start data refresh: ${err.message}`),
+  })
+
+  // ---- Poll screener job ----
+  const { data: screenJobStatus } = useQuery({
+    queryKey: ["screener-job", screenJobId],
+    queryFn: () => api.get(`/screener/job/${screenJobId}`),
+    enabled: !!screenJobId,
     refetchInterval: (query) => {
       const status = query.state.data?.status
       if (status === "done" || status === "error") return false
       return 2000
     },
-    onError: () => setRunError("Lost connection to screener job. Check server logs."),
   })
 
-  // When job completes, refresh results and clear job
-  if (jobStatus?.status === "done" && jobId) {
-    setRunMeta(jobStatus.result)
-    setJobId(null)
+  if (screenJobStatus?.status === "done" && screenJobId) {
+    setScreenMeta(screenJobStatus.result)
+    setScreenJobId(null)
     queryClient.invalidateQueries({ queryKey: ["screener-results"] })
   }
-  if (jobStatus?.status === "error" && jobId) {
-    setRunError(`Screener failed: ${jobStatus.error}`)
-    setJobId(null)
+  if (screenJobStatus?.status === "error" && screenJobId) {
+    setScreenError(`Screener failed: ${screenJobStatus.error}`)
+    setScreenJobId(null)
   }
 
-  const isRunning = isStarting || (!!jobId && jobStatus?.status !== "done" && jobStatus?.status !== "error")
+  // ---- Poll data refresh job ----
+  const { data: refreshJobStatus } = useQuery({
+    queryKey: ["screener-job", refreshJobId],
+    queryFn: () => api.get(`/screener/job/${refreshJobId}`),
+    enabled: !!refreshJobId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (status === "done" || status === "error") return false
+      return 3000
+    },
+  })
 
-  const runButtonLabel = isStarting ? "Starting…" : isRunning ? "Running…" : "Re-run Screener"
+  if (refreshJobStatus?.status === "done" && refreshJobId) {
+    setRefreshMeta(refreshJobStatus.result)
+    setRefreshJobId(null)
+  }
+  if (refreshJobStatus?.status === "error" && refreshJobId) {
+    setRefreshError(`Data refresh failed: ${refreshJobStatus.error}`)
+    setRefreshJobId(null)
+  }
 
-  // Derive last run timestamp from results
+  const isScreening  = isStartingScreen  || (!!screenJobId  && screenJobStatus?.status  !== "done" && screenJobStatus?.status  !== "error")
+  const isRefreshing = isStartingRefresh || (!!refreshJobId && refreshJobStatus?.status !== "done" && refreshJobStatus?.status !== "error")
+
+  const screenButtonLabel  = isStartingScreen  ? "Starting…" : isScreening  ? "Screening…" : "Screen Tickers"
+  const refreshButtonLabel = isStartingRefresh ? "Starting…" : isRefreshing ? "Refreshing…" : "Refresh Data"
+
   const lastRunAt = results?.[0]?.run_at ?? null
 
   return (
     <div>
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Screener</h1>
-        <p className="text-muted-foreground text-sm mt-0.5">
-          S&amp;P 500 candidates — refreshed automatically every Saturday night
-        </p>
-        {lastRunAt && (
-          <p className="text-xs text-muted-foreground mt-1">
-            Last run: {fmtRunAt(lastRunAt)}
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Screener</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">
+            S&amp;P 500 candidates — data refreshed automatically every Saturday night
           </p>
-        )}
+          {lastRunAt && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Last run: {fmtRunAt(lastRunAt)}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <Button
+            onClick={() => startScreen()}
+            disabled={isScreening || isRefreshing}
+          >
+            {screenButtonLabel}
+          </Button>
+          {screenError && (
+            <p className="text-xs text-destructive max-w-xs text-right">{screenError}</p>
+          )}
+        </div>
       </div>
 
-      {/* Progress message while running */}
-      {isRunning && (
+      {/* Progress message while screening */}
+      {isScreening && (
         <div
           role="status"
           aria-live="polite"
           className="mb-4 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground flex items-center gap-2"
         >
           <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" aria-hidden="true" />
-          Scanning S&amp;P 500 — this takes 30–90 seconds with a cold cache…
+          Applying signal filters to cached data…
+        </div>
+      )}
+
+      {/* Progress message while data refresh is running */}
+      {isRefreshing && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-4 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground flex items-center gap-2"
+        >
+          <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" aria-hidden="true" />
+          Fetching OHLCV &amp; computing indicators for 500+ symbols — this takes several minutes…
         </div>
       )}
 
@@ -285,21 +355,22 @@ export default function ScreenerPage() {
         <>
           <ResultsTable rows={results} />
           <ResultsCards rows={results} />
-          {runMeta && (
+          {screenMeta && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-3">
-              {runMeta.run_at    && <span>Run: {fmtRunAt(runMeta.run_at)}</span>}
-              {runMeta.pass1_count != null && <span>Pass 1: {runMeta.pass1_count} candidates</span>}
-              {runMeta.pass2_count != null && <span>Pass 2: {runMeta.pass2_count} with signals</span>}
+              {screenMeta.run_at      && <span>Run: {fmtRunAt(screenMeta.run_at)}</span>}
+              {screenMeta.pass1_count != null && <span>Pass 1: {screenMeta.pass1_count} candidates</span>}
+              {screenMeta.pass2_count != null && <span>Pass 2: {screenMeta.pass2_count} with signals</span>}
             </div>
           )}
         </>
       )}
 
       <AdminPanel
-        onRun={() => startRun()}
-        isRunning={isRunning}
-        runError={runError}
-        runButtonLabel={runButtonLabel}
+        onRefresh={() => startRefresh()}
+        isRefreshing={isRefreshing}
+        refreshError={refreshError}
+        refreshButtonLabel={refreshButtonLabel}
+        refreshMeta={refreshMeta}
       />
     </div>
   )

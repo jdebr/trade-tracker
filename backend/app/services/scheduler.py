@@ -41,7 +41,8 @@ from app.config import (
 )
 from app.services.scanner import ScanResult, run_watchlist_scan
 from app.services.market_data import fetch_td_api_usage
-from app.services.prefetch import run_prefetch_job
+from app.services.prefetch import run_data_refresh
+from app.services.screener import run_screener
 from app.services.intraday import run_intraday_poll
 from app.services.earnings import run_earnings_check
 
@@ -166,11 +167,17 @@ async def scheduled_job() -> None:
 
 
 async def prefetch_job() -> None:
-    """APScheduler cron entry point for the Saturday universe prefetch."""
+    """APScheduler cron entry point for the Saturday universe prefetch.
+
+    Runs data refresh (OHLCV + indicators + metadata) then the screener,
+    so results are ready Sunday morning.
+    """
     logger.info("Saturday universe prefetch starting")
     try:
-        summary = await asyncio.to_thread(run_prefetch_job)
-        logger.info("Saturday prefetch complete: %s", summary)
+        summary = await asyncio.to_thread(run_data_refresh)
+        logger.info("Saturday data refresh complete: %s", summary)
+        _, candidates = await asyncio.to_thread(run_screener)
+        logger.info("Saturday screener complete — %d candidates", len(candidates))
     except Exception as exc:
         logger.error("Saturday prefetch failed: %s", exc, exc_info=True)
 

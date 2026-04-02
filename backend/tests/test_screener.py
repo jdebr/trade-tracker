@@ -7,7 +7,9 @@ Criteria:
 1. Pass 1 returns symbols from the DB result (filtering is DB-side)
 2. Pass 2 scores and ranks symbols correctly given injected indicator/volume data
 3. save_results inserts the right rows; get_latest_results retrieves them
-4. run_screener orchestrates pass1 → pass2 → save in order
+4. run_screener orchestrates pass1 → pass2 → save in order (no data fetching)
+5. run_screener returns (datetime, []) immediately when pass1 has no survivors
+6. _get_recent_volumes issues a single bulk query (not one per symbol)
 """
 
 from datetime import datetime, timezone
@@ -20,6 +22,7 @@ from app.services.screener import (
     save_results,
     get_latest_results,
     run_screener,
+    _get_recent_volumes,
 )
 
 
@@ -172,26 +175,82 @@ def test_get_latest_results_returns_most_recent_run():
 
 
 # ---------------------------------------------------------------------------
-# Criterion 4: run_screener orchestrates steps in order
+# Criterion 4: run_screener orchestrates without data fetching
 # ---------------------------------------------------------------------------
 
 def test_run_screener_orchestrates_correctly():
     """
-    run_screener should: pass1 → _fetch_and_compute → pass2 → save.
-    Verify each step is called and a (datetime, list) is returned.
+    run_screener should: pass1 → pass2 → save, with no _fetch_and_compute step.
+    Verify each DB-only step is called and (datetime, list) is returned.
     """
     call_order = []
 
-    with patch("app.services.screener.pass1_filter", return_value=["AAPL", "MSFT"]) as p1, \
-         patch("app.services.screener._fetch_and_compute", side_effect=lambda s: call_order.append("compute")) as fc, \
+    with patch("app.services.screener.pass1_filter", return_value=["AAPL", "MSFT"]), \
          patch("app.services.screener.pass2_score", side_effect=lambda s: call_order.append("pass2") or []) as p2, \
          patch("app.services.screener.save_results", side_effect=lambda c, r: call_order.append("save")) as sr:
         run_at, candidates = run_screener()
 
     assert isinstance(run_at, datetime)
     assert isinstance(candidates, list)
-    assert "compute" in call_order
-    assert "pass2"   in call_order
-    assert "save"    in call_order
-    assert call_order.index("compute") < call_order.index("pass2")
-    assert call_order.index("pass2")   < call_order.index("save")
+    assert "pass2" in call_order
+    assert "save"  in call_order
+    assert call_order.index("pass2") < call_order.index("save")
+
+
+# ---------------------------------------------------------------------------
+# Criterion 5: run_screener returns empty immediately when pass1 has no survivors
+# ---------------------------------------------------------------------------
+
+def test_run_screener_returns_empty_when_no_pass1_survivors():
+    """
+    run_screener should return (datetime, []) immediately if pass1 returns no
+    symbols — it must NOT attempt any data fetching or call pass2/save.
+    """
+    save_mock = MagicMock()
+    pass2_mock = MagicMock()
+
+    with patch("app.services.screener.pass1_filter", return_value=[]), \
+         patch("app.services.screener.pass2_score", pass2_mock), \
+         patch("app.services.screener.save_results", save_mock):
+        run_at, candidates = run_screener()
+
+    assert isinstance(run_at, datetime)
+    assert candidates == []
+    pass2_mock.assert_not_called()
+    save_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Criterion 6: _get_recent_volumes issues a single bulk query
+# ---------------------------------------------------------------------------
+
+def test_get_recent_volumes_uses_single_bulk_query():
+    """
+    _get_recent_volumes must issue ONE .in_() query for all symbols rather than
+    one round-trip per symbol. Results are grouped by symbol in Python.
+    """
+    mock_client = MagicMock()
+    (mock_client.table.return_value
+                .select.return_value
+                .in_.return_value
+                .order.return_value
+                .limit.return_value
+                .execute.return_value.data) = [
+        {"symbol": "AAPL", "date": "2026-04-01", "close": 150.0, "volume": 2_000_000},
+        {"symbol": "AAPL", "date": "2026-03-31", "close": 148.0, "volume": 1_800_000},
+        {"symbol": "AAPL", "date": "2026-03-28", "close": 147.0, "volume": 1_500_000},
+        {"symbol": "MSFT", "date": "2026-04-01", "close": 420.0, "volume": 3_000_000},
+        {"symbol": "MSFT", "date": "2026-03-31", "close": 418.0, "volume": 2_800_000},
+    ]
+
+    with patch("app.services.screener.get_client", return_value=mock_client):
+        result = _get_recent_volumes(["AAPL", "MSFT"])
+
+    # Single .in_() call — not one per symbol
+    assert mock_client.table.return_value.select.return_value.in_.call_count == 1
+
+    assert "AAPL" in result
+    assert "MSFT" in result
+    # vol_3d for AAPL: avg of first 3 bars = (2M + 1.8M + 1.5M) / 3
+    assert result["AAPL"]["vol_3d"] == pytest.approx((2_000_000 + 1_800_000 + 1_500_000) / 3)
+    assert result["AAPL"]["last_close"] == pytest.approx(150.0)

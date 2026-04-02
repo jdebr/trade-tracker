@@ -1,5 +1,5 @@
 """
-Two-pass screener.
+Two-pass screener — pure DB rules engine.
 
 Pass 1 — broad filter (no API calls, uses tickers table metadata):
   - avg_volume > 1,000,000
@@ -15,6 +15,9 @@ Pass 2 — signal filter (reads indicator_snapshots + ohlcv_cache):
 Each passing signal adds 1 to signal_score (max 4).
 Results are ranked by signal_score descending and written to screener_results.
 
+No data fetching is performed here — run data refresh first via
+POST /screener/refresh-data or the Saturday scheduled prefetch.
+
 Public API:
     run_screener() -> tuple[datetime, list[dict]]
     get_latest_results(limit) -> list[dict]
@@ -22,17 +25,24 @@ Public API:
 """
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 from app.database import get_client
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
 # Pass 1 thresholds
-MIN_AVG_VOLUME = 1_000_000
-MIN_PRICE = 15.0
-MAX_PRICE = 500.0
+# ---------------------------------------------------------------------------
 
+MIN_AVG_VOLUME = 1_000_000
+MIN_PRICE      = 15.0
+MAX_PRICE      = 500.0
+
+# ---------------------------------------------------------------------------
 # Pass 2 thresholds
+# ---------------------------------------------------------------------------
+
 RSI_LOW  = 35.0
 RSI_HIGH = 65.0
 
@@ -45,6 +55,7 @@ def pass1_filter() -> list[str]:
     """
     Query the tickers table and return symbols that pass all three criteria.
     Symbols with NULL avg_volume or last_price are excluded (not yet populated).
+    Run data refresh first if this returns an empty list.
     """
     result = (
         get_client()
@@ -73,7 +84,6 @@ def _get_indicators(symbols: list[str]) -> dict[str, dict]:
     if not symbols:
         return {}
 
-    # Fetch all matching symbols; take the most-recent date per symbol.
     result = (
         get_client()
         .table("indicator_snapshots")
@@ -94,32 +104,43 @@ def _get_indicators(symbols: list[str]) -> dict[str, dict]:
 
 def _get_recent_volumes(symbols: list[str]) -> dict[str, dict]:
     """
-    For each symbol, return avg of last 3d and last 20d volumes from ohlcv_cache.
+    For each symbol return avg of last 3d and last 20d volumes from ohlcv_cache.
     Result: {symbol: {"vol_3d": float, "vol_20d": float, "last_close": float}}
+
+    Uses a single bulk query (.in_()) and groups by symbol in Python,
+    instead of one round-trip per symbol.
     """
     if not symbols:
         return {}
 
+    # Fetch up to 20 bars per symbol in one query — order by date desc so we
+    # get the most-recent bars first.
+    max_rows = len(symbols) * 20
+    result = (
+        get_client()
+        .table("ohlcv_cache")
+        .select("symbol,volume,close,date")
+        .in_("symbol", symbols)
+        .order("date", desc=True)
+        .limit(max_rows)
+        .execute()
+    )
+
+    # Group by symbol, keeping at most 20 rows each (already desc by date).
+    grouped: dict[str, list] = defaultdict(list)
+    for row in result.data:
+        sym = row["symbol"]
+        if len(grouped[sym]) < 20:
+            grouped[sym].append(row)
+
     volumes: dict[str, dict] = {}
-    for symbol in symbols:
-        result = (
-            get_client()
-            .table("ohlcv_cache")
-            .select("volume,close")
-            .eq("symbol", symbol)
-            .order("date", desc=True)
-            .limit(20)
-            .execute()
-        )
-        bars = result.data
+    for symbol, bars in grouped.items():
         if not bars:
             continue
-
         vols = [b["volume"] for b in bars]
         last_close = float(bars[0]["close"])
         vol_3d  = sum(vols[:3]) / min(3, len(vols))
         vol_20d = sum(vols)     / len(vols)
-
         volumes[symbol] = {
             "vol_3d":     vol_3d,
             "vol_20d":    vol_20d,
@@ -219,7 +240,6 @@ def save_results(candidates: list[dict], run_at: datetime) -> int:
 
 def get_latest_results(limit: int = 50) -> list[dict]:
     """Return the most recent run's results, ordered by rank."""
-    # Find the most recent run_at.
     latest = (
         get_client()
         .table("screener_results")
@@ -257,77 +277,28 @@ def _results_for_run(run_at: str, limit: int) -> list[dict]:
 # Orchestrator
 # ---------------------------------------------------------------------------
 
-def _bootstrap_symbols() -> list[str]:
-    """
-    Return all non-ETF ticker symbols from the tickers table.
-    Used as a fallback when Pass 1 returns nothing (cold-start / no metadata yet).
-    """
-    result = (
-        get_client()
-        .table("tickers")
-        .select("symbol")
-        .eq("is_etf", False)
-        .execute()
-    )
-    return [r["symbol"] for r in result.data]
-
-
-def _fetch_and_compute(symbols: list[str]) -> None:
-    """Fetch OHLCV and compute indicators for a list of symbols."""
-    from app.services.market_data import fetch_ohlcv
-    from app.services.ohlcv_cache import upsert_bars
-    from app.services.indicators import compute_indicators
-    from app.services.universe import update_ticker_metadata
-
-    for symbol in symbols:
-        try:
-            bars = fetch_ohlcv(symbol)
-            upsert_bars(bars)
-        except Exception as exc:
-            logger.warning("OHLCV fetch failed for %s: %s", symbol, exc)
-        try:
-            compute_indicators(symbol)
-        except Exception as exc:
-            logger.warning("Indicator compute failed for %s: %s", symbol, exc)
-
-    try:
-        update_ticker_metadata(symbols)
-    except Exception as exc:
-        logger.warning("Metadata update failed: %s", exc)
-
-
 def run_screener() -> tuple[datetime, list[dict]]:
     """
-    Full screener run:
-      1. Pass 1 — filter tickers table by volume/price metadata
-         If no metadata exists yet (cold start), fall back to all non-ETF tickers
-         and fetch OHLCV + compute indicators first.
-      2. Fetch OHLCV + compute indicators for Pass 1 survivors (ensures fresh data)
-      3. Pass 2 — score survivors against indicator snapshots
-      4. Save results to screener_results
+    Pure DB screener run — no data fetching.
 
-    Returns (run_at, candidates).
+      1. Pass 1 — filter tickers table by volume/price metadata
+      2. Pass 2 — score survivors against indicator snapshots
+      3. Save results to screener_results
+
+    Returns (run_at, candidates).  Returns (run_at, []) if no Pass 1 survivors —
+    run data refresh first (POST /screener/refresh-data) to populate the cache.
     """
     run_at = datetime.now(timezone.utc)
 
-    pass1_survivors = pass1_filter()
-    if not pass1_survivors:
-        logger.warning("Pass 1 returned no survivors — attempting cold-start bootstrap")
-        all_symbols = _bootstrap_symbols()
-        if not all_symbols:
-            logger.error("Tickers table is empty — run sync-universe first")
-            return run_at, []
-        logger.info("Cold-start: fetching OHLCV + indicators for %d tickers", len(all_symbols))
-        _fetch_and_compute(all_symbols)
-        pass1_survivors = pass1_filter()
-        if not pass1_survivors:
-            logger.warning("Pass 1 still empty after bootstrap — check OHLCV data")
-            return run_at, []
+    symbols = pass1_filter()
+    if not symbols:
+        logger.warning(
+            "Pass 1 returned 0 survivors — cache may be empty. "
+            "Run POST /screener/refresh-data to populate OHLCV and metadata."
+        )
+        return run_at, []
 
-    # Ensure fresh OHLCV + indicators for Pass 1 survivors before scoring
-    _fetch_and_compute(pass1_survivors)
-
-    candidates = pass2_score(pass1_survivors)
+    candidates = pass2_score(symbols)
     save_results(candidates, run_at)
 
     return run_at, candidates

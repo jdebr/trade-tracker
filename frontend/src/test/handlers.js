@@ -130,6 +130,22 @@ export const MOCK_JOB_DONE = {
   error: null,
 }
 
+export const MOCK_REFRESH_JOB_DONE = {
+  job_id: MOCK_JOB_ID,
+  status: "done",
+  created_at: "2026-03-29T20:00:00Z",
+  started_at: "2026-03-29T20:00:01Z",
+  finished_at: "2026-03-29T20:05:00Z",
+  result: {
+    attempted: 508,
+    fetched: 500,
+    skipped_fresh: 0,
+    failed: 8,
+    elapsed_seconds: 240,
+  },
+  error: null,
+}
+
 export const handlers = [
   http.get(`${API_URL}/health`, () =>
     HttpResponse.json({ status: "ok" })
@@ -139,8 +155,13 @@ export const handlers = [
     HttpResponse.json(MOCK_SCREENER_RESULTS)
   ),
 
-  // Background job: POST returns job_id, GET /job/:id returns done immediately
+  // Screener run: POST returns job_id, GET /job/:id returns done immediately
   http.post(`${API_URL}/screener/run`, () =>
+    HttpResponse.json({ job_id: MOCK_JOB_ID, status: "pending" }, { status: 202 })
+  ),
+
+  // Data refresh: POST returns job_id, GET /job/:id returns done immediately
+  http.post(`${API_URL}/screener/refresh-data`, () =>
     HttpResponse.json({ job_id: MOCK_JOB_ID, status: "pending" }, { status: 202 })
   ),
 

@@ -1,18 +1,15 @@
 """
-Saturday universe prefetch job.
+Data refresh pipeline — fetches OHLCV, computes indicators, updates metadata.
 
-Fetches OHLCV for all S&P 500 tickers, computes indicators, updates ticker
-metadata, and runs the screener — so results are ready Sunday morning.
-
-Strategy:
-  - yfinance for bulk fetch (free, no API credits)
-  - Twelve Data fallback for any yfinance failures (uses daily credit budget)
-  - Indicator compute failures are logged and skipped — don't abort the job
+Designed to run independently of the screener so that:
+  - The screener can be a pure DB rules engine (fast, no API calls)
+  - Data can be refreshed on demand (seed endpoint) or on a schedule
+  - Fresh symbols are skipped to avoid redundant API calls (idempotent)
 
 Public API:
-  fetch_bulk_yfinance(symbols) -> tuple[list[str], list[str]]
-  fetch_bulk_with_fallback(symbols) -> tuple[list[str], list[str]]
-  run_prefetch_job() -> dict
+  fetch_bulk_yfinance(symbols, lookback_days) -> tuple[list[str], list[str]]
+  fetch_bulk_with_fallback(symbols, lookback_days) -> tuple[list[str], list[str]]
+  run_data_refresh(symbols=None, force=False) -> dict
 """
 
 import logging
@@ -21,7 +18,7 @@ from datetime import datetime, timezone
 from app.database import get_client
 from app.services.indicators import compute_indicators
 from app.services.market_data import fetch_from_twelve_data, fetch_from_yfinance
-from app.services.screener import run_screener
+from app.services.ohlcv_cache import bulk_check_freshness
 from app.services.universe import update_ticker_metadata
 
 logger = logging.getLogger(__name__)
@@ -110,42 +107,74 @@ def fetch_bulk_with_fallback(
 
 
 # ---------------------------------------------------------------------------
-# Prefetch job
+# Data refresh
 # ---------------------------------------------------------------------------
 
-def run_prefetch_job() -> dict:
+def run_data_refresh(
+    symbols: list[str] | None = None,
+    force: bool = False,
+) -> dict:
     """
-    Full Saturday prefetch pipeline:
-      1. Get all ticker symbols from DB
-      2. Fetch OHLCV (yfinance + TD fallback)
-      3. Compute indicators for all successfully fetched tickers
-      4. Update ticker metadata (avg_volume, last_price)
-      5. Run two-pass screener and save results
+    Fetch OHLCV, compute indicators, and update ticker metadata.
 
-    Returns a summary dict.
+    Steps:
+      1. Resolve symbols (use provided list or fetch all non-ETF from tickers table)
+      2. Check freshness — skip symbols with up-to-date OHLCV unless force=True
+      3. Fetch OHLCV (yfinance primary, Twelve Data fallback) for stale symbols
+      4. Compute indicators for all fetched symbols
+      5. Update ticker metadata (avg_volume, last_price) for all symbols
+
+    Args:
+        symbols: Explicit list of symbols to refresh. If None, uses all tickers.
+        force:   If True, skip freshness check and fetch all symbols regardless.
+
+    Returns a summary dict with keys:
+        attempted, fetched, skipped_fresh, failed, elapsed_seconds
     """
     started_at = datetime.now(timezone.utc)
-    logger.info("Universe prefetch job starting")
+    logger.info("Data refresh starting (force=%s)", force)
 
-    symbols = _get_all_ticker_symbols()
-    if not symbols:
-        logger.error("Prefetch job: tickers table is empty — run sync-universe first")
+    all_symbols = symbols if symbols is not None else _get_all_ticker_symbols()
+
+    if not all_symbols:
+        logger.error("Data refresh: no symbols to process — is the tickers table populated?")
         return {
-            "tickers_attempted": 0,
-            "fetched": 0,
-            "failed": 0,
-            "screener_candidates": 0,
-            "started_at": started_at.isoformat(),
+            "attempted":     0,
+            "fetched":       0,
+            "skipped_fresh": 0,
+            "failed":        0,
+            "elapsed_seconds": 0,
         }
 
-    logger.info("Prefetch: fetching OHLCV for %d tickers", len(symbols))
-    fetched_symbols, failed_symbols = fetch_bulk_with_fallback(symbols)
-    logger.info(
-        "Prefetch: OHLCV done — %d fetched, %d failed",
-        len(fetched_symbols), len(failed_symbols),
-    )
+    # Determine which symbols need fetching.
+    if force:
+        stale_symbols = all_symbols
+        skipped_count = 0
+        logger.info("Force refresh: fetching all %d symbols", len(stale_symbols))
+    else:
+        freshness = bulk_check_freshness(all_symbols)
+        stale_symbols = [s for s in all_symbols if not freshness.get(s, False)]
+        skipped_count = len(all_symbols) - len(stale_symbols)
+        logger.info(
+            "Freshness check: %d stale, %d fresh (skipping)",
+            len(stale_symbols), skipped_count,
+        )
 
-    # Compute indicators — skip individual failures, don't abort
+    # Fetch OHLCV for stale symbols.
+    fetched_symbols: list[str] = []
+    failed_symbols:  list[str] = []
+
+    if stale_symbols:
+        logger.info("Fetching OHLCV for %d symbols", len(stale_symbols))
+        fetched_symbols, failed_symbols = fetch_bulk_with_fallback(stale_symbols)
+        logger.info(
+            "OHLCV done — %d fetched, %d failed",
+            len(fetched_symbols), len(failed_symbols),
+        )
+    else:
+        logger.info("All symbols are fresh — skipping OHLCV fetch")
+
+    # Compute indicators for fetched symbols.
     computed = 0
     for symbol in fetched_symbols:
         try:
@@ -154,32 +183,23 @@ def run_prefetch_job() -> dict:
         except Exception as exc:
             logger.warning("Indicator compute failed for %s: %s", symbol, exc)
 
-    logger.info("Prefetch: indicators computed for %d tickers", computed)
+    if fetched_symbols:
+        logger.info("Indicators computed for %d symbols", computed)
 
-    # Update ticker metadata so Pass 1 filters have fresh avg_volume / last_price
+    # Update ticker metadata so Pass 1 has fresh avg_volume / last_price.
     try:
-        update_ticker_metadata(fetched_symbols)
+        update_ticker_metadata(all_symbols)
     except Exception as exc:
         logger.warning("Metadata update failed: %s", exc)
 
-    # Run screener — results saved to screener_results table
-    candidates = []
-    try:
-        _, candidates = run_screener()
-        logger.info("Prefetch: screener complete — %d candidates", len(candidates))
-    except Exception as exc:
-        logger.error("Prefetch: screener failed: %s", exc, exc_info=True)
-
     finished_at = datetime.now(timezone.utc)
     elapsed = (finished_at - started_at).total_seconds()
-    logger.info("Universe prefetch job finished in %.0fs", elapsed)
+    logger.info("Data refresh finished in %.0fs", elapsed)
 
     return {
-        "tickers_attempted": len(symbols),
-        "fetched": len(fetched_symbols),
-        "failed": len(failed_symbols),
-        "screener_candidates": len(candidates),
-        "started_at": started_at.isoformat(),
-        "finished_at": finished_at.isoformat(),
+        "attempted":       len(all_symbols),
+        "fetched":         len(fetched_symbols),
+        "skipped_fresh":   skipped_count,
+        "failed":          len(failed_symbols),
         "elapsed_seconds": int(elapsed),
     }
