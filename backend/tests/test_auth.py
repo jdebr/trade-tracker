@@ -47,7 +47,7 @@ def client():
     """TestClient with a mocked DB and the test JWT secret patched in."""
     mock_db = MagicMock()
     mock_db.table.return_value.select.return_value.execute.return_value.data = []
-    with patch("app.dependencies.SUPABASE_JWT_SECRET", TEST_SECRET):
+    with patch("app.dependencies._jwt_secret", TEST_SECRET):
         with patch("app.database.get_client", return_value=mock_db):
             yield TestClient(app)
 
