@@ -275,12 +275,14 @@ def _bootstrap_symbols() -> list[str]:
 def _fetch_and_compute(symbols: list[str]) -> None:
     """Fetch OHLCV and compute indicators for a list of symbols."""
     from app.services.market_data import fetch_ohlcv
+    from app.services.ohlcv_cache import upsert_bars
     from app.services.indicators import compute_indicators
     from app.services.universe import update_ticker_metadata
 
     for symbol in symbols:
         try:
-            fetch_ohlcv(symbol)
+            bars = fetch_ohlcv(symbol)
+            upsert_bars(bars)
         except Exception as exc:
             logger.warning("OHLCV fetch failed for %s: %s", symbol, exc)
         try:
