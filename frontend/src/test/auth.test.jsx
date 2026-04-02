@@ -14,7 +14,7 @@ import { it, expect, vi } from "vitest"
 import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 import { MemoryRouter, Routes, Route } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { AuthContext } from "@/context/AuthContext"
+import { AuthContext, AuthProvider } from "@/context/AuthContext"
 import ProtectedRoute from "@/components/ProtectedRoute"
 import LoginPage from "@/pages/LoginPage"
 import { supabase } from "@/lib/supabase"
@@ -23,15 +23,18 @@ const FAKE_SESSION = { access_token: "test-token", user: { id: "test-user" } }
 
 function renderLogin(initialPath = "/login") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  // Provide session=null so LoginPage doesn't immediately redirect away
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/" element={<div>Home</div>} />
-          <Route path="/screener" element={<div>Screener</div>} />
-        </Routes>
-      </MemoryRouter>
+      <AuthContext.Provider value={{ session: null, user: null, loading: false, signOut: vi.fn() }}>
+        <MemoryRouter initialEntries={[initialPath]}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/" element={<div>Home</div>} />
+            <Route path="/screener" element={<div>Screener</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>
     </QueryClientProvider>
   )
 }

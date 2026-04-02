@@ -1,12 +1,19 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { supabase } from "@/lib/supabase"
+import { useAuth } from "@/context/AuthContext"
 import { Button } from "@/components/ui/button"
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const from = location.state?.from?.pathname ?? "/"
+  const { session } = useAuth()
+
+  // Navigate once the session is confirmed in context (avoids race with onAuthStateChange)
+  useEffect(() => {
+    if (session) navigate(from, { replace: true })
+  }, [session])
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -19,11 +26,8 @@ export default function LoginPage() {
     setLoading(true)
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
-    if (error) {
-      setError(error.message)
-    } else {
-      navigate(from, { replace: true })
-    }
+    if (error) setError(error.message)
+    // navigation handled by the useEffect above once session updates
   }
 
   async function handleGoogleLogin() {
