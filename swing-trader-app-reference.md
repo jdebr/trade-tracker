@@ -426,41 +426,44 @@ Status legend: ✅ Done · 🔄 In Progress · ⬜ Pending
 
 ---
 
-### 9. 🔄 Deploy to production
+### 9. ✅ Deploy to production
 
 Get the app running on Render.com + Vercel and accessible from a real URL. Data pipeline refactored to use automated Saturday prefetch + intraday polling.
 
-**Subtasks — Infrastructure (largely complete)**
+**Subtasks — Infrastructure**
 - [x] Add CORS config to FastAPI via `ALLOWED_ORIGINS` env var
 - [x] Add `POST /screener/sync-universe` endpoint for fresh install
 - [x] `requirements.txt` and `render.yaml` for Render deploy
 - [x] `.python-version` pinned to 3.12
 - [x] `vercel.json` SPA rewrite for client-side routing
 - [x] Refresh `sp500.csv` to full 505 symbols; replace Wikipedia fetch with datahub.io
-- [ ] Verify Render deploy is stable and scheduler fires at 4:15 PM ET
-- [ ] Confirm Vercel frontend connects to Render backend end-to-end
+- [x] Render pre-deploy test gate (`pytest -x -q` in buildCommand)
+- [x] Render deploy stable; Vercel frontend connects to Render backend
 
-**Subtasks — Data pipeline redesign**
-- [x] Saturday prefetch job: fetch OHLCV for all 505 tickers via yfinance; retry failures with Twelve Data; compute indicators; update ticker metadata; run screener and save results
-- [x] Intraday quote poller: yfinance `fast_info` for watchlist tickers at 9:30, 11:00, 12:30, 2:00, 3:30 ET; evaluate price-vs-snapshot alert conditions; insert deduped intraday alerts
-- [x] Pre-market earnings check: daily at 8 AM ET; fetch upcoming earnings (within 5 days) for watchlist tickers; surface as alerts
-- [x] API usage tracking: `fetch_td_api_usage()` in `market_data.py`; exposed via `get_status()` response
-- [x] EOD scan time shifted to 4:15 PM ET (after market close confirmation)
-- [x] Screener page: results display is read-only with last-run timestamp; Run Screener demoted to hidden admin toggle
+**Subtasks — Data pipeline**
+- [x] Screener refactored as pure DB rules engine (no API calls during screening)
+- [x] `run_data_refresh()` in `prefetch.py` — OHLCV fetch + indicators + metadata, separate from screener
+- [x] `POST /screener/refresh-data` endpoint for on-demand seeding; skips fresh symbols (idempotent); `?force=true` to override
+- [x] Saturday prefetch job calls `run_data_refresh` then `run_screener` as separate steps
+- [x] `_get_recent_volumes()` uses single bulk `.in_()` query (N+1 eliminated)
+- [x] Intraday quote poller: yfinance `fast_info` at 9:30, 11:00, 12:30, 2:00, 3:30 ET; deduped intraday alerts
+- [x] Pre-market earnings check: daily at 8 AM ET; yfinance `Ticker.calendar`; surfaces as alerts
+- [x] API usage tracking: `fetch_td_api_usage()` exposed via `GET /scheduler/status`
+- [x] EOD scan time shifted to 4:15 PM ET
 
-**Testing criteria**
-- [ ] Frontend loads from Vercel URL and connects to Render backend
-- [ ] Saturday job runs and screener results are populated by Sunday morning
-- [ ] Intraday poller fires on schedule and produces alerts
-- [ ] Twelve Data credit usage stays well under 800/day
-- [ ] No credentials in git history or deployed environment
+**Subtasks — Screener UX**
+- [x] Results display is read-only with last-run timestamp
+- [x] "Screen Tickers" button in header — fast, pure DB, no API calls
+- [x] Admin panel with "Refresh Data" button for the slow OHLCV fetch (hidden by default)
 
 **Technical notes**
 - Saturday job uses yfinance for bulk fetch (free, no credits); TD only for individual failures
+- Screener `run_screener()` is now ~10 lines — pure DB filter + score + save, no bootstrapping logic
+- `run_data_refresh(force=False)` uses `bulk_check_freshness()` to skip up-to-date symbols
 - Intraday alerts use last EOD snapshot as baseline — no full indicator recompute needed
 - Earnings check uses `yfinance.Ticker.calendar` (free, no TD credits)
-- Intraday quote poll uses `yfinance.fast_info` (free, no TD credits)
 - `ALLOWED_ORIGINS` on Render: `https://trade-tracker-blush.vercel.app,http://localhost:5173`
+- 104 backend tests / 72 frontend tests passing
 
 ---
 
@@ -493,19 +496,19 @@ Secure the app behind a login wall before it's accessible on a public URL. Singl
 
 ### 11. ⬜ Deployment testing and polish (V1)
 
-Iterate on the live deployed app — fix rough edges, complete the data pipeline, and ship the UI improvements identified during deployment testing. This is the "V1 complete" milestone.
+Iterate on the live deployed app — verify scheduled jobs, fix rough edges, and ship the UI improvements identified during deployment testing. This is the "V1 complete" milestone.
 
-**Data pipeline**
-- [ ] Saturday prefetch job fully working end-to-end on Render (see milestone 9 subtasks)
-- [ ] Intraday poller working and producing alerts on the live app
+**Live verification (carry-over from M9)**
+- [ ] Trigger "Refresh Data" on live app; confirm OHLCV populates and "Screen Tickers" returns results
+- [ ] Saturday prefetch job fires automatically and screener results are ready Sunday morning
+- [ ] Intraday poller fires on schedule and produces alerts in the dashboard
 - [ ] Earnings calendar alerts appearing in dashboard
 - [ ] API usage visible in scheduler status bar
-- [ ] Verify Twelve Data credit usage is within budget after a full week of live operation
+- [ ] Twelve Data credit usage stays well under 800/day after a full week of live operation
+- [ ] No credentials in git history or deployed environment
 
 **Screener page**
-- [ ] Results display is read-only; shows last run timestamp
 - [ ] "Add to Watchlist" button per row in results table
-- [ ] Admin re-run button (low-key, e.g. in a settings dropdown or footer)
 
 **Watchlist page**
 - [ ] Replace free-text symbol input with a searchable dropdown populated from the tickers universe
