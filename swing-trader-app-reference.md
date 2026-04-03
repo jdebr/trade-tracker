@@ -42,7 +42,8 @@ Friday:
 | **Indicators** | `pandas-ta` | RSI, MACD, Bollinger Bands, EMA ribbon (8/21/50), ATR, OBV — computed on cached OHLCV |
 | **Scheduler** | APScheduler `AsyncIOScheduler` | In-process; EOD scan 4:15 PM ET Mon–Fri, intraday poll 5× daily, universe prefetch Sat 23:00 ET |
 | **Charts** | TradingView Lightweight Charts v5 | Candlestick + BB/EMA overlays; deep link to TradingView.com |
-| **Hosting (planned)** | Render.com (backend) + Vercel (frontend) | Render starter ~$7/mo; Vercel free |
+| **Auth** | Supabase Auth | Email/password + Google OAuth; JWT validated server-side via `supabase.auth.get_user()` |
+| **Hosting** | Render.com (backend) + Vercel (frontend) | Render starter ~$7/mo; Vercel free |
 
 ### Running locally
 - Backend: `conda activate swing-trader && cd backend && uvicorn app.main:app --reload`
@@ -467,7 +468,7 @@ Get the app running on Render.com + Vercel and accessible from a real URL. Data 
 
 ---
 
-### 10. ⬜ Authentication and user login
+### 10. ✅ Authentication and user login
 
 Secure the app behind a login wall before it's accessible on a public URL. Single-user for now; multi-user deferred until there's a concrete need.
 
@@ -475,22 +476,21 @@ Secure the app behind a login wall before it's accessible on a public URL. Singl
 - Protect the personal instance — no unauthenticated access to any page or API endpoint
 - Keep multi-user as a future option without building it now (small DB migration when needed; not worth the complexity upfront)
 
-**Approach**
-- Use Supabase Auth (email/password; OAuth optional)
-- Backend: validate Supabase JWT on all protected endpoints via a FastAPI dependency
-- Frontend: login page, auth context, protected route wrapper, token attached to all `@/lib/api` requests
-- No `user_id` schema changes for now — all users share the same data. If multiple users are needed later, the migration on a small personal DB is straightforward.
-
 **Subtasks**
-- [ ] Enable Supabase Auth; create first user account
-- [ ] FastAPI auth dependency: validate JWT on all non-health routes
-- [ ] Frontend: `/login` page, auth context provider, redirect unauthenticated users, attach token to API client
-- [ ] Confirm all existing features work end-to-end with auth in place
+- [x] Enable Supabase Auth; create first user account (email/password + Google OAuth via Supabase bundled credentials)
+- [x] FastAPI auth dependency: validate JWT on all non-health routes via `supabase.auth.get_user(token)`
+- [x] Frontend: `/login` page, auth context provider, redirect unauthenticated users, attach token to API client
+- [x] Confirm all existing features work end-to-end with auth in place
 
 **Technical notes**
-- Supabase Auth is free and already in the stack — no new service needed
-- Backend continues using the service role key for DB access; JWT validation is the auth gate
-- For shared access (friends/family): share one set of credentials, or add additional Supabase Auth users with the same single-tenant data
+- Backend validates tokens by calling `supabase.auth.get_user(token)` — Supabase verifies server-side, no local JWT library needed
+- This approach is algorithm-agnostic (works with RS256 or HS256) and handles key rotation automatically
+- Disable public signups in Supabase dashboard (Authentication → Settings) — new accounts only via Invite User
+- `SUPABASE_JWT_SECRET` is not used and not needed — token validation goes through Supabase's auth API
+- Backend continues using the service role key for DB access; auth dependency is the gate on all non-health routes
+- For shared access: add additional Supabase Auth users — all share the same single-tenant data
+- Admin role extension point: `require_admin_role` stub in `backend/app/dependencies.py`; set `app_metadata.role = "admin"` on the privileged user in Supabase dashboard when needed
+- 108 backend tests / 78 frontend tests passing
 
 ---
 
