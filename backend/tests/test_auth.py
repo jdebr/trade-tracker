@@ -1,108 +1,82 @@
 """
 Tests for JWT authentication (app/dependencies.py).
 
-These tests exercise real JWT validation — they clear the global auth override
-from conftest.py so that get_current_user runs with actual token verification.
+These tests exercise real auth validation — they clear the global auth override
+from conftest.py so that get_current_user runs for real.
 
 Criteria:
 1. Missing Authorization header returns 401 (HTTPBearer auto-rejects)
-2. Malformed / wrong-secret token returns 401
-3. Expired token returns 401
-4. Valid token passes auth and reaches the handler
-5. GET /health is open — no token required
+2. Token rejected by Supabase returns 401
+3. Valid token accepted by Supabase passes auth and reaches the handler
+4. GET /health is open — no token required
 """
 
-import time
 from unittest.mock import MagicMock, patch
 
-import jwt
 import pytest
 from fastapi.testclient import TestClient
+from supabase import AuthApiError
 
 from app.dependencies import get_current_user
 from app.main import app
 
-TEST_SECRET = "test-secret-at-least-32-characters-long-for-hs256"
-
-
-def _make_token(expired: bool = False, wrong_secret: bool = False) -> str:
-    secret = "wrong-secret" if wrong_secret else TEST_SECRET
-    payload = {
-        "sub": "test-user-id",
-        "aud": "authenticated",
-        "exp": int(time.time()) + (-10 if expired else 3600),
-    }
-    return jwt.encode(payload, secret, algorithm="HS256")
-
-
-def _make_mock_jwks_client(secret: str = TEST_SECRET):
-    """Return a mock PyJWKClient whose get_signing_key_from_jwt returns the test secret."""
-    mock_key = MagicMock()
-    mock_key.key = secret
-    mock_client = MagicMock()
-    mock_client.get_signing_key_from_jwt.return_value = mock_key
-    return mock_client
-
 
 @pytest.fixture(autouse=True)
 def use_real_auth():
-    """Remove the global test override so real JWT validation runs for this module."""
+    """Remove the global test override so real auth validation runs for this module."""
     app.dependency_overrides.pop(get_current_user, None)
     yield
 
 
-@pytest.fixture
-def client():
-    """TestClient with a mocked DB and JWKS client patched to use the test secret."""
-    mock_db = MagicMock()
-    mock_db.table.return_value.select.return_value.execute.return_value.data = []
-    with patch("app.dependencies._jwks_client", _make_mock_jwks_client()):
-        with patch("app.database.get_client", return_value=mock_db):
-            yield TestClient(app)
+def _mock_db():
+    mock = MagicMock()
+    mock.table.return_value.select.return_value.execute.return_value.data = []
+    return mock
 
 
 @pytest.fixture
-def client_wrong_secret():
-    """Client whose JWKS returns a different secret (simulates wrong-key failure)."""
-    mock_db = MagicMock()
-    mock_db.table.return_value.select.return_value.execute.return_value.data = []
-    with patch("app.dependencies._jwks_client", _make_mock_jwks_client("wrong-secret")):
-        with patch("app.database.get_client", return_value=mock_db):
-            yield TestClient(app)
+def client_valid():
+    """TestClient whose Supabase auth.get_user() succeeds."""
+    mock_user = MagicMock()
+    mock_user.user = {"sub": "test-user-id"}
+    with patch("app.dependencies.get_client") as mock_get_client:
+        mock_get_client.return_value.auth.get_user.return_value = mock_user
+        mock_get_client.return_value.table = _mock_db().table
+        yield TestClient(app)
+
+
+@pytest.fixture
+def client_invalid():
+    """TestClient whose Supabase auth.get_user() raises AuthApiError."""
+    with patch("app.dependencies.get_client") as mock_get_client:
+        mock_get_client.return_value.auth.get_user.side_effect = AuthApiError(
+            message="invalid JWT", status=401, code="invalid_jwt"
+        )
+        mock_get_client.return_value.table = _mock_db().table
+        yield TestClient(app)
 
 
 # 1. Missing auth header → 401
-def test_missing_auth_header_returns_401(client):
-    response = client.get("/watchlist")
+def test_missing_auth_header_returns_401(client_valid):
+    response = client_valid.get("/watchlist")
     assert response.status_code == 401
 
 
-# 2. Wrong-secret token → 401
-def test_invalid_token_returns_401(client_wrong_secret):
-    token = _make_token()
-    response = client_wrong_secret.get("/watchlist", headers={"Authorization": f"Bearer {token}"})
+# 2. Supabase rejects the token → 401
+def test_invalid_token_returns_401(client_invalid):
+    response = client_invalid.get("/watchlist", headers={"Authorization": "Bearer bad-token"})
     assert response.status_code == 401
-    assert "Invalid token" in response.json()["detail"]
 
 
-# 3. Expired token → 401
-def test_expired_token_returns_401(client):
-    token = _make_token(expired=True)
-    response = client.get("/watchlist", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 401
-    assert "Token expired" in response.json()["detail"]
-
-
-# 4. Valid token passes auth (handler runs — may return 200 or other non-401)
-def test_valid_token_passes_auth(client):
-    token = _make_token()
-    response = client.get("/watchlist", headers={"Authorization": f"Bearer {token}"})
+# 3. Valid token passes auth
+def test_valid_token_passes_auth(client_valid):
+    response = client_valid.get("/watchlist", headers={"Authorization": "Bearer good-token"})
     assert response.status_code != 401
     assert response.status_code != 403
 
 
-# 5. Health endpoint is open — no token required
-def test_health_is_open(client):
-    response = client.get("/health")
+# 4. Health endpoint is open — no token required
+def test_health_is_open(client_valid):
+    response = client_valid.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
