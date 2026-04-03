@@ -1,4 +1,3 @@
-import base64
 import logging
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -11,9 +10,9 @@ bearer_scheme = HTTPBearer()
 # Supabase stores the JWT secret base64-encoded in the dashboard.
 # PyJWT needs the raw bytes to verify the signature.
 if SUPABASE_JWT_SECRET:
-    _jwt_secret = base64.b64decode(SUPABASE_JWT_SECRET)
+    _jwt_secret = SUPABASE_JWT_SECRET
 else:
-    _jwt_secret = b""
+    _jwt_secret = ""
     logger.warning("SUPABASE_JWT_SECRET is not set — all authenticated requests will be rejected")
 
 

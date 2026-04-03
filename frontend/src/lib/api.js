@@ -4,6 +4,8 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000"
 
 async function request(path, options = {}) {
   const { data: { session } } = await supabase.auth.getSession()
+  // TODO: remove after confirming auth is working
+  console.debug("[api] session present:", !!session, path)
   const headers = { ...(options.headers ?? {}) }
   if (session?.access_token) {
     headers["Authorization"] = `Bearer ${session.access_token}`
