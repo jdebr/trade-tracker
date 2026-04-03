@@ -2,28 +2,27 @@ import logging
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
-from app.config import SUPABASE_JWT_SECRET
+from jwt import PyJWKClient
+from app.config import SUPABASE_URL
 
 logger = logging.getLogger(__name__)
 bearer_scheme = HTTPBearer()
 
-# Supabase stores the JWT secret base64-encoded in the dashboard.
-# PyJWT needs the raw bytes to verify the signature.
-if SUPABASE_JWT_SECRET:
-    _jwt_secret = SUPABASE_JWT_SECRET
-else:
-    _jwt_secret = ""
-    logger.warning("SUPABASE_JWT_SECRET is not set — all authenticated requests will be rejected")
+# Fetch Supabase's public keys from their JWKS endpoint.
+# PyJWKClient caches the keys and handles rotation automatically.
+# Supports RS256 (newer Supabase projects) and HS256 (legacy).
+_jwks_client = PyJWKClient(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
 
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> dict:
     try:
+        signing_key = _jwks_client.get_signing_key_from_jwt(credentials.credentials)
         payload = jwt.decode(
             credentials.credentials,
-            _jwt_secret,
-            algorithms=["HS256"],
+            signing_key.key,
+            algorithms=["RS256", "HS256"],
             audience="authenticated",
         )
         return payload

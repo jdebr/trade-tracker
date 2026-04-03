@@ -35,6 +35,15 @@ def _make_token(expired: bool = False, wrong_secret: bool = False) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
+def _make_mock_jwks_client(secret: str = TEST_SECRET):
+    """Return a mock PyJWKClient whose get_signing_key_from_jwt returns the test secret."""
+    mock_key = MagicMock()
+    mock_key.key = secret
+    mock_client = MagicMock()
+    mock_client.get_signing_key_from_jwt.return_value = mock_key
+    return mock_client
+
+
 @pytest.fixture(autouse=True)
 def use_real_auth():
     """Remove the global test override so real JWT validation runs for this module."""
@@ -44,10 +53,20 @@ def use_real_auth():
 
 @pytest.fixture
 def client():
-    """TestClient with a mocked DB and the test JWT secret patched in."""
+    """TestClient with a mocked DB and JWKS client patched to use the test secret."""
     mock_db = MagicMock()
     mock_db.table.return_value.select.return_value.execute.return_value.data = []
-    with patch("app.dependencies._jwt_secret", TEST_SECRET):
+    with patch("app.dependencies._jwks_client", _make_mock_jwks_client()):
+        with patch("app.database.get_client", return_value=mock_db):
+            yield TestClient(app)
+
+
+@pytest.fixture
+def client_wrong_secret():
+    """Client whose JWKS returns a different secret (simulates wrong-key failure)."""
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.execute.return_value.data = []
+    with patch("app.dependencies._jwks_client", _make_mock_jwks_client("wrong-secret")):
         with patch("app.database.get_client", return_value=mock_db):
             yield TestClient(app)
 
@@ -59,9 +78,9 @@ def test_missing_auth_header_returns_401(client):
 
 
 # 2. Wrong-secret token → 401
-def test_invalid_token_returns_401(client):
-    token = _make_token(wrong_secret=True)
-    response = client.get("/watchlist", headers={"Authorization": f"Bearer {token}"})
+def test_invalid_token_returns_401(client_wrong_secret):
+    token = _make_token()
+    response = client_wrong_secret.get("/watchlist", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
     assert "Invalid token" in response.json()["detail"]
 
