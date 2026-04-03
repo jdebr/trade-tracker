@@ -16,6 +16,7 @@ async function request(path, options = {}) {
   }
   if (!res.ok) {
     const text = await res.text()
+    console.error(`[api] ${options.method ?? "GET"} ${path} → ${res.status}`, text)
     throw new Error(`API ${res.status}: ${text}`)
   }
   return res.json()

@@ -1,8 +1,10 @@
+import logging
 from fastapi import APIRouter, HTTPException
 from app.database import get_client
 from app.models.watchlist import WatchlistEntry, WatchlistAdd, WatchlistUpdate
 from typing import Optional
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
 
 
@@ -23,6 +25,7 @@ def add_to_watchlist(body: WatchlistAdd):
         .insert(body.model_dump())
         .execute()
     )
+    logger.info("Added %s to watchlist (group=%s)", body.symbol, body.group_name)
     return result.data[0]
 
 
@@ -40,6 +43,7 @@ def update_watchlist_entry(symbol: str, body: WatchlistUpdate):
     )
     if not result.data:
         raise HTTPException(status_code=404, detail=f"{symbol} not found in watchlist")
+    logger.info("Updated watchlist entry %s: %s", symbol.upper(), updates)
     return result.data[0]
 
 
@@ -54,3 +58,4 @@ def remove_from_watchlist(symbol: str):
     )
     if not result.data:
         raise HTTPException(status_code=404, detail=f"{symbol} not found in watchlist")
+    logger.info("Removed %s from watchlist", symbol.upper())

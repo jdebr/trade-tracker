@@ -1,14 +1,20 @@
 import base64
+import logging
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
 from app.config import SUPABASE_JWT_SECRET
 
+logger = logging.getLogger(__name__)
 bearer_scheme = HTTPBearer()
 
 # Supabase stores the JWT secret base64-encoded in the dashboard.
 # PyJWT needs the raw bytes to verify the signature.
-_jwt_secret = base64.b64decode(SUPABASE_JWT_SECRET) if SUPABASE_JWT_SECRET else ""
+if SUPABASE_JWT_SECRET:
+    _jwt_secret = base64.b64decode(SUPABASE_JWT_SECRET)
+else:
+    _jwt_secret = b""
+    logger.warning("SUPABASE_JWT_SECRET is not set — all authenticated requests will be rejected")
 
 
 def get_current_user(
@@ -23,8 +29,10 @@ def get_current_user(
         )
         return payload
     except jwt.ExpiredSignatureError:
+        logger.warning("JWT validation failed: token expired")
         raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as exc:
+        logger.warning("JWT validation failed: %s", type(exc).__name__)
         raise HTTPException(status_code=401, detail="Invalid token")
 
 

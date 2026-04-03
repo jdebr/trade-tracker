@@ -521,6 +521,20 @@ Iterate on the live deployed app — verify scheduled jobs, fix rough edges, and
 - [ ] Confirm all error states and empty states are clear and actionable on the live app
 - [ ] Watchlist FK error ("symbol not in universe") replaced by the new dropdown flow — user can't enter an invalid symbol by accident
 
+**Observability and logging**
+- [ ] `dependencies.py`: warn at startup if `SUPABASE_JWT_SECRET` is missing; log auth failures with exception type (expired vs. invalid)
+- [ ] `scheduler.py`: add `exc_info=True` to all job exception handlers; log job registration count at startup
+- [ ] `screener.py` / `prefetch.py`: log indicator/metadata failure counts; log symbols skipped for insufficient data
+- [ ] `intraday.py` / `earnings.py`: log per-symbol fetch failures with symbol name; log count of symbols skipped (no snapshot)
+- [ ] `routers/watchlist.py`: add INFO logs for add/remove/update operations
+- [ ] `frontend/src/lib/api.js`: log failed requests (method, path, status) before throwing; catch network errors
+- [ ] `frontend/src/App.jsx`: add React error boundary — catches render crashes, shows fallback UI, logs to console
+
+**Technical notes**
+- Backend already has `logging.basicConfig` wired in `main.py` — all new logs use `logging.getLogger(__name__)`
+- Frontend logs go to browser console and appear in Vercel function logs
+- Severity guide: missing env vars → WARNING at startup; auth failures → WARNING; job exceptions → ERROR with `exc_info=True`; normal operations → INFO or DEBUG
+
 ---
 
 ### 12. ⬜ App User Guide

@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { AuthProvider } from "@/context/AuthContext"
+import ErrorBoundary from "@/components/ErrorBoundary"
 import ProtectedRoute from "@/components/ProtectedRoute"
 import Layout from "@/components/layout/Layout"
 import LoginPage     from "@/pages/LoginPage"
@@ -19,6 +20,7 @@ function NotFoundPage() {
 
 export default function App() {
   return (
+    <ErrorBoundary>
     <AuthProvider>
       <BrowserRouter>
         <Routes>
@@ -35,5 +37,6 @@ export default function App() {
         </Routes>
       </BrowserRouter>
     </AuthProvider>
+    </ErrorBoundary>
   )
 }
