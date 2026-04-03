@@ -163,9 +163,11 @@ def pass2_score(symbols: list[str]) -> list[dict]:
     vol_data   = _get_recent_volumes(symbols)
 
     candidates = []
+    skipped_no_snap = 0
     for symbol in symbols:
         snap = indicators.get(symbol)
         if not snap:
+            skipped_no_snap += 1
             logger.debug("%s: no indicator snapshot — skipping Pass 2", symbol)
             continue
 
@@ -194,14 +196,16 @@ def pass2_score(symbols: list[str]) -> list[dict]:
             "close_price":      last_close,
         })
 
+    logger.info(
+        "Pass 2 scoring: %d symbols — %d had no snapshot, %d scored (top score: %d)",
+        len(symbols), skipped_no_snap, len(candidates),
+        candidates[0]["signal_score"] if candidates else 0,
+    )
+
     # Rank by score descending, then alphabetically as tiebreaker.
     candidates.sort(key=lambda c: (-c["signal_score"], c["symbol"]))
     for i, c in enumerate(candidates):
         c["rank"] = i + 1
-
-    logger.info("Pass 2: %d candidates scored (top score: %d)",
-                len(candidates),
-                candidates[0]["signal_score"] if candidates else 0)
     return candidates
 
 

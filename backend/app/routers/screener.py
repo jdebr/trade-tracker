@@ -140,6 +140,4 @@ def list_screener_results(
     else:
         rows = get_latest_results(limit)
 
-    if not rows:
-        raise HTTPException(status_code=404, detail="No screener results found")
     return rows

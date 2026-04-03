@@ -10,11 +10,13 @@ Criteria:
 4. run_screener orchestrates pass1 → pass2 → save in order (no data fetching)
 5. run_screener returns (datetime, []) immediately when pass1 has no survivors
 6. _get_recent_volumes issues a single bulk query (not one per symbol)
+7. GET /screener/results returns 200 [] (not 404) when no runs exist yet
 """
 
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch, call
 import pytest
+from fastapi.testclient import TestClient
 
 from app.services.screener import (
     pass1_filter,
@@ -254,3 +256,35 @@ def test_get_recent_volumes_uses_single_bulk_query():
     # vol_3d for AAPL: avg of first 3 bars = (2M + 1.8M + 1.5M) / 3
     assert result["AAPL"]["vol_3d"] == pytest.approx((2_000_000 + 1_800_000 + 1_500_000) / 3)
     assert result["AAPL"]["last_close"] == pytest.approx(150.0)
+
+
+# ---------------------------------------------------------------------------
+# Criterion 7: GET /screener/results returns 200 [] when no runs exist yet
+# ---------------------------------------------------------------------------
+
+def test_get_latest_results_returns_empty_list_when_no_runs():
+    """get_latest_results should return [] (not raise) when the table has no rows."""
+    mock_client = MagicMock()
+    mock_client.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+
+    with patch("app.services.screener.get_client", return_value=mock_client):
+        result = get_latest_results()
+
+    assert result == []
+
+
+def test_screener_results_endpoint_returns_200_empty_list_when_no_runs():
+    """
+    GET /screener/results should return HTTP 200 with an empty list when no
+    screener runs have been saved — not 404.
+    """
+    from app.main import app
+
+    mock_client = MagicMock()
+    mock_client.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+
+    with patch("app.services.screener.get_client", return_value=mock_client):
+        response = TestClient(app).get("/screener/results")
+
+    assert response.status_code == 200
+    assert response.json() == []

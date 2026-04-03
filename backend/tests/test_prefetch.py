@@ -209,7 +209,8 @@ def test_run_data_refresh_skips_fresh_symbols():
     with patch("app.services.prefetch._get_all_ticker_symbols", return_value=["AAPL", "MSFT", "NVDA"]), \
          patch("app.services.prefetch.bulk_check_freshness", return_value=freshness), \
          patch("app.services.prefetch.fetch_bulk_with_fallback", fetch_mock), \
-         patch("app.services.prefetch.compute_indicators"), \
+         patch("app.services.prefetch.compute_indicators", return_value=None), \
+         patch("app.services.prefetch.upsert_snapshots"), \
          patch("app.services.prefetch.update_ticker_metadata"):
         result = run_data_refresh()
 
@@ -233,7 +234,8 @@ def test_run_data_refresh_force_bypasses_freshness():
     with patch("app.services.prefetch._get_all_ticker_symbols", return_value=["AAPL", "MSFT"]), \
          patch("app.services.prefetch.bulk_check_freshness", return_value=freshness), \
          patch("app.services.prefetch.fetch_bulk_with_fallback", fetch_mock), \
-         patch("app.services.prefetch.compute_indicators"), \
+         patch("app.services.prefetch.compute_indicators", return_value=None), \
+         patch("app.services.prefetch.upsert_snapshots"), \
          patch("app.services.prefetch.update_ticker_metadata"):
         result = run_data_refresh(force=True)
 

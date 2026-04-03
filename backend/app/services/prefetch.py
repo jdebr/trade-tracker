@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.database import get_client
+from app.services.indicator_cache import upsert_snapshots
 from app.services.indicators import compute_indicators
 from app.services.market_data import fetch_from_twelve_data, fetch_from_yfinance
 from app.services.ohlcv_cache import bulk_check_freshness
@@ -174,17 +175,20 @@ def run_data_refresh(
     else:
         logger.info("All symbols are fresh — skipping OHLCV fetch")
 
-    # Compute indicators for fetched symbols.
-    computed = 0
-    for symbol in fetched_symbols:
+    # Compute indicators for all symbols (not just fetched) so that symbols with
+    # fresh OHLCV but missing snapshots are backfilled. upsert is idempotent.
+    snapshots: list[dict] = []
+    for symbol in all_symbols:
         try:
-            compute_indicators(symbol)
-            computed += 1
+            snap = compute_indicators(symbol)
+            if snap:
+                snapshots.append(snap)
         except Exception as exc:
             logger.warning("Indicator compute failed for %s: %s", symbol, exc)
 
-    if fetched_symbols:
-        logger.info("Indicators computed for %d symbols", computed)
+    rows_upserted = upsert_snapshots(snapshots)
+    computed = len(snapshots)
+    logger.info("Indicators upserted for %d / %d symbols", computed, len(all_symbols))
 
     # Update ticker metadata so Pass 1 has fresh avg_volume / last_price.
     try:

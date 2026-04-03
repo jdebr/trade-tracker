@@ -153,7 +153,10 @@ function ResultsCards({ rows }) {
 // Admin panel — hidden by default, for data refresh
 // ---------------------------------------------------------------------------
 
-function AdminPanel({ onRefresh, isRefreshing, refreshError, refreshButtonLabel, refreshMeta }) {
+function AdminPanel({
+  onRefresh, isRefreshing, refreshError, refreshButtonLabel, refreshMeta,
+  onRecompute, isRecomputing, recomputeError, recomputeButtonLabel, recomputeMeta,
+}) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-6 text-right">
@@ -165,23 +168,43 @@ function AdminPanel({ onRefresh, isRefreshing, refreshError, refreshButtonLabel,
       </button>
       {open && (
         <div className="mt-2 inline-flex flex-col items-end gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onRefresh}
-            disabled={isRefreshing}
-          >
-            {refreshButtonLabel}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onRecompute}
+              disabled={isRecomputing || isRefreshing}
+            >
+              {recomputeButtonLabel}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onRefresh}
+              disabled={isRefreshing || isRecomputing}
+            >
+              {refreshButtonLabel}
+            </Button>
+          </div>
+          {recomputeError && (
+            <p className="text-xs text-destructive max-w-xs text-right">{recomputeError}</p>
+          )}
+          {recomputeMeta && (
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {recomputeMeta.rows_upserted != null && <span>Upserted: {recomputeMeta.rows_upserted}</span>}
+              {recomputeMeta.skipped?.length > 0   && <span>Skipped (low bars): {recomputeMeta.skipped.length}</span>}
+              {recomputeMeta.failed?.length  > 0   && <span>Failed: {recomputeMeta.failed.length}</span>}
+            </div>
+          )}
           {refreshError && (
             <p className="text-xs text-destructive max-w-xs text-right">{refreshError}</p>
           )}
           {refreshMeta && (
             <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              {refreshMeta.attempted != null && <span>Attempted: {refreshMeta.attempted}</span>}
-              {refreshMeta.fetched    != null && <span>Fetched: {refreshMeta.fetched}</span>}
+              {refreshMeta.attempted    != null && <span>Attempted: {refreshMeta.attempted}</span>}
+              {refreshMeta.fetched      != null && <span>Fetched: {refreshMeta.fetched}</span>}
               {refreshMeta.skipped_fresh != null && <span>Skipped (fresh): {refreshMeta.skipped_fresh}</span>}
-              {refreshMeta.failed     != null && <span>Failed: {refreshMeta.failed}</span>}
+              {refreshMeta.failed       != null && <span>Failed: {refreshMeta.failed}</span>}
             </div>
           )}
         </div>
@@ -206,6 +229,11 @@ export default function ScreenerPage() {
   const [refreshJobId,   setRefreshJobId]   = useState(null)
   const [refreshError,   setRefreshError]   = useState(null)
   const [refreshMeta,    setRefreshMeta]    = useState(null)
+
+  // ---- Recompute indicators state ----
+  const [recomputeJobId,  setRecomputeJobId]  = useState(null)
+  const [recomputeError,  setRecomputeError]  = useState(null)
+  const [recomputeMeta,   setRecomputeMeta]   = useState(null)
 
   // ---- Existing results ----
   const { data: results, isLoading, isError } = useQuery({
@@ -234,6 +262,17 @@ export default function ScreenerPage() {
       setRefreshMeta(null)
     },
     onError: (err) => setRefreshError(`Failed to start data refresh: ${err.message}`),
+  })
+
+  // ---- Trigger recompute all indicators ----
+  const { mutate: startRecompute, isPending: isStartingRecompute } = useMutation({
+    mutationFn: () => api.post("/indicators/compute?all_symbols=true"),
+    onSuccess: ({ job_id }) => {
+      setRecomputeJobId(job_id)
+      setRecomputeError(null)
+      setRecomputeMeta(null)
+    },
+    onError: (err) => setRecomputeError(`Failed to start recompute: ${err.message}`),
   })
 
   // ---- Poll screener job ----
@@ -279,11 +318,34 @@ export default function ScreenerPage() {
     setRefreshJobId(null)
   }
 
-  const isScreening  = isStartingScreen  || (!!screenJobId  && screenJobStatus?.status  !== "done" && screenJobStatus?.status  !== "error")
-  const isRefreshing = isStartingRefresh || (!!refreshJobId && refreshJobStatus?.status !== "done" && refreshJobStatus?.status !== "error")
+  // ---- Poll recompute job ----
+  const { data: recomputeJobStatus } = useQuery({
+    queryKey: ["screener-job", recomputeJobId],
+    queryFn: () => api.get(`/screener/job/${recomputeJobId}`),
+    enabled: !!recomputeJobId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (status === "done" || status === "error") return false
+      return 3000
+    },
+  })
 
-  const screenButtonLabel  = isStartingScreen  ? "Starting…" : isScreening  ? "Screening…" : "Screen Tickers"
-  const refreshButtonLabel = isStartingRefresh ? "Starting…" : isRefreshing ? "Refreshing…" : "Refresh Data"
+  if (recomputeJobStatus?.status === "done" && recomputeJobId) {
+    setRecomputeMeta(recomputeJobStatus.result)
+    setRecomputeJobId(null)
+  }
+  if (recomputeJobStatus?.status === "error" && recomputeJobId) {
+    setRecomputeError(`Recompute failed: ${recomputeJobStatus.error}`)
+    setRecomputeJobId(null)
+  }
+
+  const isScreening   = isStartingScreen    || (!!screenJobId    && screenJobStatus?.status    !== "done" && screenJobStatus?.status    !== "error")
+  const isRefreshing  = isStartingRefresh   || (!!refreshJobId   && refreshJobStatus?.status   !== "done" && refreshJobStatus?.status   !== "error")
+  const isRecomputing = isStartingRecompute || (!!recomputeJobId && recomputeJobStatus?.status !== "done" && recomputeJobStatus?.status !== "error")
+
+  const screenButtonLabel    = isStartingScreen    ? "Starting…" : isScreening    ? "Screening…"   : "Screen Tickers"
+  const refreshButtonLabel   = isStartingRefresh   ? "Starting…" : isRefreshing   ? "Refreshing…"  : "Refresh Data"
+  const recomputeButtonLabel = isStartingRecompute ? "Starting…" : isRecomputing  ? "Computing…"   : "Recompute Indicators"
 
   const lastRunAt = results?.[0]?.run_at ?? null
 
@@ -324,6 +386,18 @@ export default function ScreenerPage() {
         >
           <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" aria-hidden="true" />
           Applying signal filters to cached data…
+        </div>
+      )}
+
+      {/* Progress message while recompute is running */}
+      {isRecomputing && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-4 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground flex items-center gap-2"
+        >
+          <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" aria-hidden="true" />
+          Recomputing indicators for all tickers — this takes a minute or two…
         </div>
       )}
 
@@ -371,6 +445,11 @@ export default function ScreenerPage() {
         refreshError={refreshError}
         refreshButtonLabel={refreshButtonLabel}
         refreshMeta={refreshMeta}
+        onRecompute={() => startRecompute()}
+        isRecomputing={isRecomputing}
+        recomputeError={recomputeError}
+        recomputeButtonLabel={recomputeButtonLabel}
+        recomputeMeta={recomputeMeta}
       />
     </div>
   )
