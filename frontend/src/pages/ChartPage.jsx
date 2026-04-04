@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ExternalLink } from "lucide-react"
-import { subMonths, subYears, parseISO, isAfter } from "date-fns"
+import { subMonths, parseISO, isAfter } from "date-fns"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -156,6 +156,18 @@ export default function ChartPage() {
     queryFn: () => api.get("/watchlist"),
   })
 
+  // Ticker names for subtitle
+  const { data: tickerList = [] } = useQuery({
+    queryKey: ["tickers"],
+    queryFn: () => api.get("/tickers"),
+    staleTime: 60 * 60 * 1000,
+  })
+  const nameMap = useMemo(() => {
+    const m = new Map()
+    for (const t of tickerList) m.set(t.symbol, t.name)
+    return m
+  }, [tickerList])
+
   // Auto-select first symbol once watchlist loads
   useEffect(() => {
     if (!symbol && watchlist.length > 0) setSymbol(watchlist[0].symbol)
@@ -184,10 +196,19 @@ export default function ChartPage() {
   return (
     <div className="flex flex-col h-full">
       <div className="mb-4">
-        <h1 className="text-2xl font-semibold">Chart</h1>
-        <p className="text-muted-foreground text-sm mt-0.5">
-          Candlestick chart with indicator overlays
-        </p>
+        <h1 className="text-2xl font-semibold">
+          Chart{activeSymbol ? ` — ${activeSymbol}` : ""}
+        </h1>
+        {activeSymbol && nameMap.get(activeSymbol) && (
+          <p className="text-muted-foreground text-sm mt-0.5">
+            {nameMap.get(activeSymbol)}
+          </p>
+        )}
+        {(!activeSymbol || !nameMap.get(activeSymbol)) && (
+          <p className="text-muted-foreground text-sm mt-0.5">
+            Candlestick chart with indicator overlays
+          </p>
+        )}
       </div>
 
       {/* Symbol picker */}
@@ -223,7 +244,7 @@ export default function ChartPage() {
 
           {/* Chart area */}
           {loadingBars && (
-            <Skeleton className="w-full h-[420px] rounded-lg" aria-label="Loading chart" />
+            <Skeleton className="w-full rounded-lg" style={{ height: "clamp(400px, 65vh, 720px)" }} aria-label="Loading chart" />
           )}
 
           {!loadingBars && barsError && (
@@ -240,7 +261,10 @@ export default function ChartPage() {
           )}
 
           {!loadingBars && !barsError && bars.length > 0 && (
-            <div className="rounded-lg border border-border overflow-hidden" style={{ height: "420px" }}>
+            <div
+              className="rounded-lg border border-border overflow-hidden"
+              style={{ height: "clamp(400px, 65vh, 720px)" }}
+            >
               <Chart
                 bars={bars}
                 overlays={overlays}
