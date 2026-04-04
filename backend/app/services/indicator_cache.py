@@ -16,7 +16,7 @@ def get_indicator_history(symbol: str, limit: int = 252) -> list[dict]:
     result = (
         get_client()
         .table("indicator_snapshots")
-        .select("date,bb_upper,bb_middle,bb_lower,ema_8,ema_21,ema_50")
+        .select("symbol,date,bb_upper,bb_middle,bb_lower,ema_8,ema_21,ema_50")
         .eq("symbol", symbol.upper())
         .order("date", desc=True)
         .limit(limit)
