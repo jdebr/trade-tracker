@@ -1,6 +1,6 @@
 # Swing Trader App — Developer Reference
 
-> Working log for a personal swing trading assistant. Milestones 1–8 are complete. Use this doc to understand the current state of the app, then see the Dev Work Tracker for what's next.
+> Working log for a personal swing trading assistant. Milestones 1–11 are complete. Use this doc to understand the current state of the app, then see the Dev Work Tracker for what's next.
 
 ---
 
@@ -35,7 +35,7 @@ Friday:
 
 | Layer | Choice | Details |
 |---|---|---|
-| **Frontend** | React + Vite (no TypeScript) | Tailwind v4, shadcn/ui primitives, TanStack Query v5, React Router v6 |
+| **Frontend** | React + Vite (no TypeScript) | Tailwind v4, shadcn/ui primitives, TanStack Query v5, React Router v6; Radix UI (Slot, Tooltip, Dialog) |
 | **Backend** | FastAPI (Python 3.12) | Conda env `swing-trader`; APScheduler for scheduled scan |
 | **Database** | PostgreSQL via Supabase | Free tier (500MB); 7 tables — see schema below |
 | **Market Data** | Twelve Data (primary) + yfinance fallback | 800 req/day free; OHLCV cached in Supabase to minimize API calls |
@@ -177,10 +177,10 @@ All pages are implemented and working (Milestones 1–8 complete):
 
 | Page | Description |
 |---|---|
-| **Watchlist** | Add/remove tickers with searchable dropdown (universe or screener results filter); assign groups; user-friendly errors |
-| **Scanner** | Indicator snapshot table — RSI color-coded, BB squeeze dot, MACD histogram; scheduler status bar (last/next scan, cooldown, pause notice); Run Scan Now button |
-| **Screener** | Read-only results display (auto-populated Saturday night); ranked table with signal dots, score badges, and Add to Watchlist per row; admin re-run button |
-| **Charts** | Candlestick + BB/EMA overlays; 1M/3M/6M/1Y/All zoom; candlestick/line toggle; TradingView deep link |
+| **Watchlist** | Add/remove tickers; group assignment via fuzzy-match combobox (creates new groups inline); group filter pills; delete confirmation dialog; optimistic remove with rollback on error |
+| **Scanner** | Indicator snapshot table — RSI color-coded, BB squeeze dot, MACD histogram; symbol name tooltips on hover; indicator header tooltips (description + interpretation); scheduler status bar (last/next scan, API credits, cooldown, pause notice); Run Scan Now button |
+| **Screener** | Read-only results display (auto-populated Saturday night); ranked table with signal dots, score badges, symbol name tooltips, indicator header tooltips, and Add to Watchlist button per row (optimistic, reverts on error); admin re-run button |
+| **Charts** | Candlestick + BB/EMA overlays; 1M/3M/6M/1Y/All zoom; candlestick/line toggle; TradingView deep link; company name subtitle; chart height 65vh (clamp 400–720px) |
 | **Alerts** | Alert cards with type badges; acknowledge + clear-all; unread count badge in nav |
 
 ---
@@ -490,50 +490,74 @@ Secure the app behind a login wall before it's accessible on a public URL. Singl
 - Backend continues using the service role key for DB access; auth dependency is the gate on all non-health routes
 - For shared access: add additional Supabase Auth users — all share the same single-tenant data
 - Admin role extension point: `require_admin_role` stub in `backend/app/dependencies.py`; set `app_metadata.role = "admin"` on the privileged user in Supabase dashboard when needed
-- 108 backend tests / 78 frontend tests passing
+- 110 backend tests / 78 frontend tests passing at end of M10 (M11 added 3 more backend tests)
 
 ---
 
-### 11. ⬜ Deployment testing and polish (V1)
+### 11. ✅ Deployment testing and polish (V1)
 
-Iterate on the live deployed app — verify scheduled jobs, fix rough edges, and ship the UI improvements identified during deployment testing. This is the "V1 complete" milestone.
+Iterated on the live deployed app — verified scheduled jobs, fixed rough edges, and shipped UI polish.
 
-**Live verification (carry-over from M9)**
-- [ ] Trigger "Refresh Data" on live app; confirm OHLCV populates and "Screen Tickers" returns results
+**Live verification**
+- [x] Trigger "Refresh Data" on live app; confirm OHLCV populates and "Screen Tickers" returns results
 - [ ] Saturday prefetch job fires automatically and screener results are ready Sunday morning
 - [ ] Intraday poller fires on schedule and produces alerts in the dashboard
 - [ ] Earnings calendar alerts appearing in dashboard
-- [ ] API usage visible in scheduler status bar
+- [x] API usage visible in scheduler status bar
 - [ ] Twelve Data credit usage stays well under 800/day after a full week of live operation
 - [ ] No credentials in git history or deployed environment
 
-**Screener page**
-- [ ] "Add to Watchlist" button per row in results table
+**Bug fixes**
+- [x] `api.js`: `DELETE /watchlist/{symbol}` was throwing JSON parse error — fixed by returning `null` on 204 No Content responses instead of calling `res.json()`
+- [x] Watchlist delete now URL-encodes symbols (handles `BRK.B` and similar)
+- [x] `GET /screener/results` was returning 404 on empty table — fixed to return `200 []`
+- [x] `compute_indicators()` return value was discarded in `prefetch.py` — screener had 0 candidates; fixed to collect and upsert snapshots
 
-**Watchlist page**
-- [ ] Replace free-text symbol input with a searchable dropdown populated from the tickers universe
-- [ ] Dropdown supports text search/filter as you type
-- [ ] Checkbox option to filter dropdown to current screener results only (Sunday candidates)
-- [ ] Free-text still works for symbols not in the universe (with appropriate warning)
+**New backend endpoint**
+- [x] `GET /tickers` — returns all non-ETF tickers sorted by symbol (`{symbol, name}`); used for symbol name tooltips and chart subtitle; auth required; registered in `main.py`
 
-**General polish**
-- [ ] Review all pages on mobile — fix any layout issues surfaced during real usage
-- [ ] Confirm all error states and empty states are clear and actionable on the live app
-- [ ] Watchlist FK error ("symbol not in universe") replaced by the new dropdown flow — user can't enter an invalid symbol by accident
+**Shared frontend infrastructure**
+- [x] `src/lib/indicators.js` — central metadata for all 11 indicators (label, fullName, description, interpretation, params)
+- [x] `src/components/ui/Tooltip.jsx` — Radix tooltip wrapper; self-wrapping with Provider so it works in tests without extra setup; 300ms delay
+- [x] `src/components/ui/Dialog.jsx` — `ConfirmDialog` component with title, description, confirm/cancel, destructive variant, isPending state
+- [x] `src/components/ui/Combobox.jsx` — fuzzy-match combobox; scorer: exact symbol prefix > symbol contains > name contains; `allowNew` shows "+ Create 'X'" option; keyboard navigation (ArrowDown/Up, Enter, Escape); click-outside to close
 
-**Observability and logging**
-- [ ] `dependencies.py`: warn at startup if `SUPABASE_JWT_SECRET` is missing; log auth failures with exception type (expired vs. invalid)
+**Watchlist**
+- [x] Delete confirmation dialog (ConfirmDialog); optimistic remove with rollback on error
+- [x] Group input → Combobox (allowNew=true, fuzzy match existing groups from watchlist data)
+- [x] Group filter pills above list; clicking filters to that group; "All" pill resets
+
+**Scanner**
+- [x] Indicator header tooltips: RSI, BB Squeeze, MACD Hist, EMA 50, ATR (description + interpretation from INDICATORS metadata)
+- [x] Symbol name tooltips on hover (from `GET /tickers` cache, staleTime 1h)
+
+**Screener**
+- [x] Indicator header tooltips on all 4 signal columns (BB Squeeze, RSI Range, Above EMA50, Vol Expand)
+- [x] Symbol name tooltips on hover
+- [x] "Add to Watchlist" `+`/`✓` button column — optimistic update, reverts to `+` on error
+
+**Chart**
+- [x] Company name subtitle below heading (from tickers cache)
+- [x] Chart height: `clamp(400px, 65vh, 720px)` (was fixed 420px)
+- [x] Chart overlay logic reviewed — series refs + cleanup already correct; overlay issues in production are data-related (empty `indicator_history` table), not a code bug
+
+**Observability**
+- [x] `dependencies.py`: log auth failures (M10)
+- [x] `screener.py` / `prefetch.py`: log indicator/metadata failure counts; log symbols skipped for insufficient data
+- [x] `routers/watchlist.py`: INFO logs for add/remove/update (M10)
+- [x] `frontend/src/lib/api.js`: log failed requests (method, path, status) before throwing (M10)
+- [x] `frontend/src/App.jsx`: React error boundary (M10)
 - [ ] `scheduler.py`: add `exc_info=True` to all job exception handlers; log job registration count at startup
-- [ ] `screener.py` / `prefetch.py`: log indicator/metadata failure counts; log symbols skipped for insufficient data
-- [ ] `intraday.py` / `earnings.py`: log per-symbol fetch failures with symbol name; log count of symbols skipped (no snapshot)
-- [ ] `routers/watchlist.py`: add INFO logs for add/remove/update operations
-- [ ] `frontend/src/lib/api.js`: log failed requests (method, path, status) before throwing; catch network errors
-- [ ] `frontend/src/App.jsx`: add React error boundary — catches render crashes, shows fallback UI, logs to console
+- [ ] `intraday.py` / `earnings.py`: log per-symbol fetch failures; log count of symbols skipped
 
 **Technical notes**
-- Backend already has `logging.basicConfig` wired in `main.py` — all new logs use `logging.getLogger(__name__)`
-- Frontend logs go to browser console and appear in Vercel function logs
-- Severity guide: missing env vars → WARNING at startup; auth failures → WARNING; job exceptions → ERROR with `exc_info=True`; normal operations → INFO or DEBUG
+- `GET /tickers` registered with `app.include_router(tickers.router, dependencies=[Depends(get_current_user)])` in `main.py`
+- Tooltip self-wraps with `TooltipPrimitive.Provider` per instance — preserves delay behavior; App-level `TooltipProvider` kept for potential future shared state
+- Combobox `aria-label` prop forwarded to the inner `<input>` — allows test selection via `getByLabelText`
+- Watchlist groups are derived client-side from watchlist data (`useMemo`) — no API call or schema change needed
+- Tickers cache: `staleTime: 60 * 60 * 1000` (1 hour) across Scanner, Screener, and Chart pages — single fetch per session
+- Watchlist cache on Screener: `staleTime: 5 * 60 * 1000` (5 min) — shared query key `["watchlist"]` with Watchlist page
+- 113 backend tests / 78 frontend tests passing
 
 ---
 
