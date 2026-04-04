@@ -11,11 +11,15 @@ export function TooltipProvider({ children, delayDuration = 300 }) {
 
 /**
  * Usage: <Tooltip content="Description text"><span>Hover me</span></Tooltip>
+ *
+ * Self-wraps with a Provider so it works in any context (including tests).
+ * App-level TooltipProvider is still kept for shared delay state on full pages.
  */
 export function Tooltip({ content, children, className }) {
   if (!content) return children
 
   return (
+    <TooltipPrimitive.Provider delayDuration={300}>
     <TooltipPrimitive.Root>
       <TooltipPrimitive.Trigger asChild>
         {children}
@@ -36,5 +40,6 @@ export function Tooltip({ content, children, className }) {
         </TooltipPrimitive.Content>
       </TooltipPrimitive.Portal>
     </TooltipPrimitive.Root>
+    </TooltipPrimitive.Provider>
   )
 }

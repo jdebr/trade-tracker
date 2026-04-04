@@ -1,9 +1,12 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { Plus, CheckCircle } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip } from "@/components/ui/Tooltip"
+import { INDICATORS } from "@/lib/indicators"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -66,13 +69,54 @@ function ResultsSkeleton() {
 // ---------------------------------------------------------------------------
 
 const SIGNALS = [
-  { key: "bb_squeeze",       label: "BB Squeeze"  },
-  { key: "rsi_in_range",     label: "RSI Range"   },
-  { key: "above_ema50",      label: "Above EMA50" },
-  { key: "volume_expansion", label: "Vol Expand"  },
+  {
+    key: "bb_squeeze",
+    label: "BB Squeeze",
+    tooltip: `${INDICATORS.bb_squeeze.description} ${INDICATORS.bb_squeeze.interpretation}`,
+  },
+  {
+    key: "rsi_in_range",
+    label: "RSI Range",
+    tooltip: "RSI between 35 and 65 — neutral momentum zone, avoiding overbought/oversold extremes.",
+  },
+  {
+    key: "above_ema50",
+    label: "Above EMA50",
+    tooltip: `${INDICATORS.ema_50.description} ${INDICATORS.ema_50.interpretation}`,
+  },
+  {
+    key: "volume_expansion",
+    label: "Vol Expand",
+    tooltip: "3-day average volume > 1.5× the 20-day average — indicates unusual volume expansion.",
+  },
 ]
 
-function ResultsTable({ rows }) {
+function AddWatchlistButton({ symbol, watchlistSet, onAdd, isPending }) {
+  const inWatchlist = watchlistSet.has(symbol)
+  if (inWatchlist) {
+    return (
+      <CheckCircle
+        size={16}
+        className="text-green-500 dark:text-green-400"
+        aria-label={`${symbol} already in watchlist`}
+      />
+    )
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-7 w-7 p-0"
+      aria-label={`Add ${symbol} to watchlist`}
+      disabled={isPending}
+      onClick={() => onAdd(symbol)}
+    >
+      <Plus size={14} aria-hidden="true" />
+    </Button>
+  )
+}
+
+function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSymbol }) {
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-border mt-4">
       <table className="w-full text-sm">
@@ -82,9 +126,12 @@ function ResultsTable({ rows }) {
             <th className="px-4 py-3 text-left font-medium">Symbol</th>
             <th className="px-4 py-3 text-left font-medium">Score</th>
             <th className="px-4 py-3 text-left font-medium">Close</th>
-            {SIGNALS.map(({ key, label }) => (
-              <th key={key} className="px-4 py-3 text-left font-medium">{label}</th>
+            {SIGNALS.map(({ key, label, tooltip }) => (
+              <Tooltip key={key} content={tooltip}>
+                <th className="px-4 py-3 text-left font-medium cursor-help">{label}</th>
+              </Tooltip>
             ))}
+            <th className="px-4 py-3 text-center font-medium w-12"></th>
           </tr>
         </thead>
         <tbody>
@@ -94,7 +141,11 @@ function ResultsTable({ rows }) {
               className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
             >
               <td className="px-4 py-3 text-muted-foreground">{row.rank}</td>
-              <td className="px-4 py-3 font-semibold tracking-wide">{row.symbol}</td>
+              <td className="px-4 py-3 font-semibold tracking-wide">
+                <Tooltip content={nameMap.get(row.symbol)}>
+                  <span className="cursor-default">{row.symbol}</span>
+                </Tooltip>
+              </td>
               <td className="px-4 py-3"><ScoreBadge score={row.signal_score} /></td>
               <td className="px-4 py-3 tabular-nums">
                 {row.close_price != null ? `$${Number(row.close_price).toFixed(2)}` : "—"}
@@ -104,6 +155,14 @@ function ResultsTable({ rows }) {
                   <SignalDot value={row[key]} label="" />
                 </td>
               ))}
+              <td className="px-4 py-3 text-center">
+                <AddWatchlistButton
+                  symbol={row.symbol}
+                  watchlistSet={watchlistSet}
+                  onAdd={onAddToWatchlist}
+                  isPending={addingSymbol === row.symbol}
+                />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -116,7 +175,7 @@ function ResultsTable({ rows }) {
 // Results card list (mobile)
 // ---------------------------------------------------------------------------
 
-function ResultsCards({ rows }) {
+function ResultsCards({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSymbol }) {
   return (
     <div className="md:hidden space-y-3 mt-4">
       {rows.map((row) => (
@@ -127,7 +186,9 @@ function ResultsCards({ rows }) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground w-5">#{row.rank}</span>
-              <span className="font-semibold tracking-wide">{row.symbol}</span>
+              <Tooltip content={nameMap.get(row.symbol)}>
+                <span className="font-semibold tracking-wide cursor-default">{row.symbol}</span>
+              </Tooltip>
             </div>
             <div className="flex items-center gap-2">
               {row.close_price != null && (
@@ -136,6 +197,12 @@ function ResultsCards({ rows }) {
                 </span>
               )}
               <ScoreBadge score={row.signal_score} />
+              <AddWatchlistButton
+                symbol={row.symbol}
+                watchlistSet={watchlistSet}
+                onAdd={onAddToWatchlist}
+                isPending={addingSymbol === row.symbol}
+              />
             </div>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -220,6 +287,10 @@ function AdminPanel({
 export default function ScreenerPage() {
   const queryClient = useQueryClient()
 
+  // ---- Add-to-watchlist state ----
+  const [addingSymbol,   setAddingSymbol]   = useState(null)
+  const [addWlError,     setAddWlError]     = useState(null)
+
   // ---- Screener run state ----
   const [screenJobId,    setScreenJobId]    = useState(null)
   const [screenError,    setScreenError]    = useState(null)
@@ -234,6 +305,55 @@ export default function ScreenerPage() {
   const [recomputeJobId,  setRecomputeJobId]  = useState(null)
   const [recomputeError,  setRecomputeError]  = useState(null)
   const [recomputeMeta,   setRecomputeMeta]   = useState(null)
+
+  // ---- Ticker name map ----
+  const { data: tickerList = [] } = useQuery({
+    queryKey: ["tickers"],
+    queryFn: () => api.get("/tickers"),
+    staleTime: 60 * 60 * 1000,
+  })
+  const nameMap = useMemo(() => {
+    const m = new Map()
+    for (const t of tickerList) m.set(t.symbol, t.name)
+    return m
+  }, [tickerList])
+
+  // ---- Watchlist membership ----
+  const { data: watchlist = [] } = useQuery({
+    queryKey: ["watchlist"],
+    queryFn: () => api.get("/watchlist"),
+    staleTime: 5 * 60 * 1000,
+  })
+  const watchlistSet = useMemo(
+    () => new Set(watchlist.map((e) => e.symbol)),
+    [watchlist]
+  )
+
+  // ---- Add to watchlist ----
+  const { mutate: addToWatchlist } = useMutation({
+    mutationFn: (symbol) => api.post("/watchlist", { symbol, group_name: null }),
+    onMutate: (symbol) => {
+      setAddingSymbol(symbol)
+      setAddWlError(null)
+      // Optimistic: add symbol to local watchlist cache
+      queryClient.setQueryData(["watchlist"], (old = []) => [
+        ...old,
+        { id: `opt-${symbol}`, symbol, group_name: null, added_at: new Date().toISOString() },
+      ])
+    },
+    onSuccess: () => {
+      setAddingSymbol(null)
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] })
+    },
+    onError: (err, symbol) => {
+      setAddingSymbol(null)
+      // Revert optimistic update
+      queryClient.setQueryData(["watchlist"], (old = []) =>
+        old.filter((e) => e.symbol !== symbol || !e.id.startsWith("opt-"))
+      )
+      setAddWlError(`Failed to add ${symbol}: ${err.message}`)
+    },
+  })
 
   // ---- Existing results ----
   const { data: results, isLoading, isError } = useQuery({
@@ -425,10 +545,26 @@ export default function ScreenerPage() {
         </div>
       )}
 
+      {addWlError && (
+        <p role="alert" className="text-xs text-destructive mt-2">{addWlError}</p>
+      )}
+
       {results && results.length > 0 && (
         <>
-          <ResultsTable rows={results} />
-          <ResultsCards rows={results} />
+          <ResultsTable
+            rows={results}
+            nameMap={nameMap}
+            watchlistSet={watchlistSet}
+            onAddToWatchlist={addToWatchlist}
+            addingSymbol={addingSymbol}
+          />
+          <ResultsCards
+            rows={results}
+            nameMap={nameMap}
+            watchlistSet={watchlistSet}
+            onAddToWatchlist={addToWatchlist}
+            addingSymbol={addingSymbol}
+          />
           {screenMeta && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-3">
               {screenMeta.run_at      && <span>Run: {fmtRunAt(screenMeta.run_at)}</span>}

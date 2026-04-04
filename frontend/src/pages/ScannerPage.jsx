@@ -1,9 +1,11 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { RefreshCw } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip } from "@/components/ui/Tooltip"
+import { INDICATORS } from "@/lib/indicators"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -47,6 +49,13 @@ function fmtDatetime(iso) {
   return new Date(iso).toLocaleString("en-US", {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   })
+}
+
+// Indicator header tooltip text
+function indicatorTip(key) {
+  const ind = INDICATORS[key]
+  if (!ind) return null
+  return `${ind.description} ${ind.interpretation}`
 }
 
 // ---------------------------------------------------------------------------
@@ -114,18 +123,28 @@ function SchedulerStatusBar({ onRunNow, isRunning, scanError }) {
 // Table (desktop)
 // ---------------------------------------------------------------------------
 
-function ScannerTable({ rows }) {
+function ScannerTable({ rows, nameMap }) {
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-muted/50 text-muted-foreground">
             <th className="px-4 py-3 text-left font-medium">Symbol</th>
-            <th className="px-4 py-3 text-right font-medium">RSI</th>
-            <th className="px-4 py-3 text-center font-medium">BB Squeeze</th>
-            <th className="px-4 py-3 text-right font-medium">MACD Hist</th>
-            <th className="px-4 py-3 text-right font-medium">EMA 50</th>
-            <th className="px-4 py-3 text-right font-medium">ATR</th>
+            <Tooltip content={indicatorTip("rsi_14")}>
+              <th className="px-4 py-3 text-right font-medium cursor-help">RSI</th>
+            </Tooltip>
+            <Tooltip content={indicatorTip("bb_squeeze")}>
+              <th className="px-4 py-3 text-center font-medium cursor-help">BB Squeeze</th>
+            </Tooltip>
+            <Tooltip content={indicatorTip("macd_hist")}>
+              <th className="px-4 py-3 text-right font-medium cursor-help">MACD Hist</th>
+            </Tooltip>
+            <Tooltip content={indicatorTip("ema_50")}>
+              <th className="px-4 py-3 text-right font-medium cursor-help">EMA 50</th>
+            </Tooltip>
+            <Tooltip content={indicatorTip("atr_14")}>
+              <th className="px-4 py-3 text-right font-medium cursor-help">ATR</th>
+            </Tooltip>
             <th className="px-4 py-3 text-right font-medium">Date</th>
           </tr>
         </thead>
@@ -135,7 +154,11 @@ function ScannerTable({ rows }) {
               key={row.symbol}
               className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
             >
-              <td className="px-4 py-3 font-semibold tracking-wide">{row.symbol}</td>
+              <td className="px-4 py-3 font-semibold tracking-wide">
+                <Tooltip content={nameMap.get(row.symbol)}>
+                  <span className="cursor-default">{row.symbol}</span>
+                </Tooltip>
+              </td>
               <td className={cn("px-4 py-3 text-right tabular-nums font-medium", rsiColour(row.rsi_14))}>
                 {fmt(row.rsi_14, 1)}
               </td>
@@ -166,7 +189,7 @@ function ScannerTable({ rows }) {
 // Card list (mobile)
 // ---------------------------------------------------------------------------
 
-function ScannerCards({ rows }) {
+function ScannerCards({ rows, nameMap }) {
   return (
     <div className="md:hidden space-y-3">
       {rows.map((row) => (
@@ -175,7 +198,9 @@ function ScannerCards({ rows }) {
           className="rounded-lg border border-border bg-card p-4"
         >
           <div className="flex items-center justify-between mb-3">
-            <span className="font-semibold tracking-wide">{row.symbol}</span>
+            <Tooltip content={nameMap.get(row.symbol)}>
+              <span className="font-semibold tracking-wide cursor-default">{row.symbol}</span>
+            </Tooltip>
             <span className="text-xs text-muted-foreground">{row.date ?? "—"}</span>
           </div>
           <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm">
@@ -233,6 +258,18 @@ export default function ScannerPage() {
     queryFn: () => api.get("/watchlist"),
   })
 
+  const { data: tickerList = [] } = useQuery({
+    queryKey: ["tickers"],
+    queryFn: () => api.get("/tickers"),
+    staleTime: 60 * 60 * 1000,
+  })
+
+  const nameMap = useMemo(() => {
+    const m = new Map()
+    for (const t of tickerList) m.set(t.symbol, t.name)
+    return m
+  }, [tickerList])
+
   const symbols = watchlist.map((e) => e.symbol)
 
   const {
@@ -250,14 +287,12 @@ export default function ScannerPage() {
     mutationFn: () => api.post("/scheduler/trigger"),
     onSuccess: () => {
       setScanError(null)
-      // Refetch snapshots after a short delay to pick up fresh indicators
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ["snapshots"] })
         queryClient.invalidateQueries({ queryKey: ["scheduler-status"] })
       }, 3000)
     },
     onError: (err) => {
-      // 429 = cooldown or paused; surface the detail message
       const msg = err.message.includes("429")
         ? err.message.replace(/^API 429: /, "").replace(/^"(.*)"$/, "$1")
         : "Failed to trigger scan. Check that the server is running."
@@ -276,7 +311,6 @@ export default function ScannerPage() {
         </p>
       </div>
 
-      {/* Scheduler status + run now button — always shown */}
       <SchedulerStatusBar
         onRunNow={() => runScan()}
         isRunning={isRunning}
@@ -311,8 +345,8 @@ export default function ScannerPage() {
 
       {!isLoading && snapshots.length > 0 && (
         <>
-          <ScannerTable rows={snapshots} />
-          <ScannerCards rows={snapshots} />
+          <ScannerTable rows={snapshots} nameMap={nameMap} />
+          <ScannerCards rows={snapshots} nameMap={nameMap} />
         </>
       )}
     </div>

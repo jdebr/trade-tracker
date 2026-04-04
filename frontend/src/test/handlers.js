@@ -205,6 +205,20 @@ export const handlers = [
     HttpResponse.json(MOCK_INDICATOR_HISTORY)
   ),
 
+  http.get(`${API_URL}/tickers`, () =>
+    HttpResponse.json([
+      { symbol: "AAPL", name: "Apple Inc." },
+      { symbol: "MSFT", name: "Microsoft Corporation" },
+      { symbol: "NVDA", name: "NVIDIA Corporation" },
+      { symbol: "JPM",  name: "JPMorgan Chase & Co." },
+      { symbol: "XOM",  name: "Exxon Mobil Corporation" },
+    ])
+  ),
+
+  http.post(`${API_URL}/indicators/compute`, () =>
+    HttpResponse.json({ job_id: MOCK_JOB_ID, status: "pending" }, { status: 202 })
+  ),
+
   http.post(`${API_URL}/watchlist`, async ({ request }) => {
     const body = await request.json()
     return HttpResponse.json(
