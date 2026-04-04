@@ -152,7 +152,8 @@ def fetch_td_api_usage() -> dict | None:
         )
         response.raise_for_status()
         payload = response.json()
-        if payload.get("status") != "ok":
+        status = payload.get("status")
+        if status is not None and status != "ok":
             logger.warning("Twelve Data api_usage error: %s", payload.get("message"))
             return None
         result = {
