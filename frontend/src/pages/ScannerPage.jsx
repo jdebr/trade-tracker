@@ -76,6 +76,15 @@ function SchedulerStatusBar({ onRunNow, isRunning, scanError }) {
             Scheduler paused until {fmtDatetime(status.pause_until)}
           </span>
         )}
+        {status?.td_api_usage && (
+          <span>
+            API credits:{" "}
+            <strong className="text-foreground">
+              {status.td_api_usage.current_usage}/{status.td_api_usage.plan_limit}
+            </strong>{" "}
+            today
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2">
         {scanError && (
