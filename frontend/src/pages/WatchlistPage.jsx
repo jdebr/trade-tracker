@@ -31,7 +31,7 @@ const groupColour = (() => {
 // ---------------------------------------------------------------------------
 // Add form
 // ---------------------------------------------------------------------------
-function AddForm({ onAdd, isAdding, error, groupOptions }) {
+function AddForm({ onAdd, isAdding, error, groupOptions, tickerOptions }) {
   const [symbol, setSymbol] = useState("")
   const [group,  setGroup]  = useState("")
 
@@ -46,14 +46,14 @@ function AddForm({ onAdd, isAdding, error, groupOptions }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-wrap gap-2 mb-6">
-      <input
-        type="text"
+      <Combobox
         value={symbol}
-        onChange={(e) => setSymbol(e.target.value)}
+        onChange={setSymbol}
+        options={tickerOptions}
         placeholder="Symbol (e.g. AAPL)"
+        allowNew={false}
         aria-label="Ticker symbol"
-        maxLength={10}
-        className="h-9 rounded-md border border-input bg-background px-3 text-sm uppercase placeholder:normal-case placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-36"
+        className="w-44"
       />
       <Combobox
         value={group}
@@ -147,6 +147,14 @@ export default function WatchlistPage() {
     queryFn: () => api.get("/watchlist"),
   })
 
+  const { data: tickerList = [] } = useQuery({
+    queryKey: ["tickers"],
+    queryFn: () => api.get("/tickers"),
+    staleTime: 60 * 60 * 1000,
+  })
+
+  const tickerOptions = useMemo(() => tickerList, [tickerList])
+
   // Unique sorted group names derived from watchlist
   const groupNames = useMemo(() => {
     const names = entries
@@ -219,6 +227,7 @@ export default function WatchlistPage() {
         isAdding={isAdding}
         error={addError}
         groupOptions={groupOptions}
+        tickerOptions={tickerOptions}
       />
 
       <GroupFilterBar

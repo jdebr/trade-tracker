@@ -12,7 +12,7 @@
  *   showEMAs    – bool
  */
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   createChart,
   CandlestickSeries,
@@ -39,6 +39,7 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
   const chartRef     = useRef(null)
   const seriesRef    = useRef(null)
   const overlayRefs  = useRef([])
+  const [chartKey,   setChartKey] = useState(0)
 
   // Create chart once on mount
   useEffect(() => {
@@ -65,6 +66,7 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
     })
 
     chartRef.current = chart
+    setChartKey((k) => k + 1)
 
     const ro = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect
@@ -144,9 +146,9 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
     if (showBB) {
       for (const key of ["bb_upper", "bb_middle", "bb_lower"]) {
         const s = chart.addSeries(LineSeries, {
-          color:           COLOURS[key],
-          lineWidth:       1,
-          lineStyle:       key === "bb_middle" ? 1 : 0, // dashed middle
+          color:            COLOURS[key],
+          lineWidth:        2,
+          lineStyle:        key === "bb_middle" ? 1 : 0, // dashed middle
           priceLineVisible: false,
           lastValueVisible: false,
         })
@@ -159,7 +161,7 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
       for (const key of ["ema_8", "ema_21", "ema_50"]) {
         const s = chart.addSeries(LineSeries, {
           color:            COLOURS[key],
-          lineWidth:        1,
+          lineWidth:        1.5,
           priceLineVisible: false,
           lastValueVisible: false,
         })
@@ -169,7 +171,10 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
     }
 
     overlayRefs.current = newSeries
-  }, [overlays, showBB, showEMAs])
+    if (newSeries.length > 0) {
+      chart.timeScale().fitContent()
+    }
+  }, [overlays, showBB, showEMAs, chartKey])
 
   return <div ref={containerRef} className="w-full h-full" data-testid="chart-container" />
 }

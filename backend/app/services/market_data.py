@@ -8,6 +8,7 @@ Each dict has keys: symbol, date, open, high, low, close, volume, source.
 """
 
 import logging
+import time
 from datetime import date, timedelta
 from typing import Optional
 import httpx
@@ -118,8 +119,13 @@ def fetch_from_yfinance(symbol: str, lookback_days: int = DEFAULT_LOOKBACK) -> l
 
 
 # ---------------------------------------------------------------------------
-# API usage
+# API usage (with 10-minute in-memory cache)
 # ---------------------------------------------------------------------------
+
+_api_usage_cache: dict | None = None
+_api_usage_cache_time: float = 0.0
+_API_USAGE_CACHE_TTL = 600  # 10 minutes
+
 
 def fetch_td_api_usage() -> dict | None:
     """
@@ -127,9 +133,16 @@ def fetch_td_api_usage() -> dict | None:
 
     Returns a dict with keys: current_usage, plan_limit, timestamp
     Returns None if the key is not configured or the request fails.
+    Caches the result for 10 minutes to avoid polling the API on every status check.
     """
+    global _api_usage_cache, _api_usage_cache_time
+
     if not TWELVE_DATA_API_KEY:
         return None
+
+    now = time.monotonic()
+    if _api_usage_cache is not None and (now - _api_usage_cache_time) < _API_USAGE_CACHE_TTL:
+        return _api_usage_cache
 
     try:
         response = httpx.get(
@@ -142,11 +155,14 @@ def fetch_td_api_usage() -> dict | None:
         if payload.get("status") != "ok":
             logger.warning("Twelve Data api_usage error: %s", payload.get("message"))
             return None
-        return {
+        result = {
             "current_usage": payload.get("current_usage"),
             "plan_limit":    payload.get("plan_limit"),
             "timestamp":     payload.get("timestamp"),
         }
+        _api_usage_cache = result
+        _api_usage_cache_time = now
+        return result
     except Exception as exc:
         logger.warning("Could not fetch Twelve Data API usage: %s", exc)
         return None

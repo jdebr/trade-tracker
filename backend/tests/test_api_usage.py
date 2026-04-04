@@ -14,6 +14,15 @@ Criteria:
 
 from unittest.mock import patch, MagicMock
 import pytest
+import app.services.market_data as _md
+
+
+@pytest.fixture(autouse=True)
+def reset_api_usage_cache():
+    """Reset the in-memory API usage cache before each test."""
+    _md._api_usage_cache = None
+    _md._api_usage_cache_time = 0.0
+    yield
 
 
 # ---------------------------------------------------------------------------
