@@ -1,10 +1,11 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Trash2 } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ConfirmDialog } from "@/components/ui/Dialog"
+import { Combobox } from "@/components/ui/Combobox"
 
 // ---------------------------------------------------------------------------
 // Group colour mapping — cycles through a fixed palette
@@ -30,9 +31,9 @@ const groupColour = (() => {
 // ---------------------------------------------------------------------------
 // Add form
 // ---------------------------------------------------------------------------
-function AddForm({ onAdd, isAdding, error }) {
-  const [symbol, setSymbol]   = useState("")
-  const [group,  setGroup]    = useState("")
+function AddForm({ onAdd, isAdding, error, groupOptions }) {
+  const [symbol, setSymbol] = useState("")
+  const [group,  setGroup]  = useState("")
 
   function handleSubmit(e) {
     e.preventDefault()
@@ -54,14 +55,14 @@ function AddForm({ onAdd, isAdding, error }) {
         maxLength={10}
         className="h-9 rounded-md border border-input bg-background px-3 text-sm uppercase placeholder:normal-case placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-36"
       />
-      <input
-        type="text"
+      <Combobox
         value={group}
-        onChange={(e) => setGroup(e.target.value)}
+        onChange={setGroup}
+        options={groupOptions}
         placeholder="Group (optional)"
+        allowNew={true}
         aria-label="Group name"
-        maxLength={30}
-        className="h-9 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-40"
+        className="w-44"
       />
       <Button type="submit" disabled={isAdding || !symbol.trim()} size="sm">
         {isAdding ? "Adding…" : "Add"}
@@ -74,9 +75,33 @@ function AddForm({ onAdd, isAdding, error }) {
 }
 
 // ---------------------------------------------------------------------------
+// Group filter pills
+// ---------------------------------------------------------------------------
+function GroupFilterBar({ groups, active, onSelect }) {
+  if (groups.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-2 mb-4">
+      {["All", ...groups].map((g) => (
+        <button
+          key={g}
+          onClick={() => onSelect(g === "All" ? null : g)}
+          className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+            (g === "All" && active === null) || g === active
+              ? "bg-primary text-primary-foreground border-primary"
+              : "bg-background border-border text-muted-foreground hover:bg-muted"
+          }`}
+        >
+          {g}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Entry row
 // ---------------------------------------------------------------------------
-function WatchlistRow({ entry, onRemove, isRemoving }) {
+function WatchlistRow({ entry, onRequestRemove }) {
   return (
     <div className="flex items-center justify-between px-4 py-3 border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
       <div className="flex items-center gap-3">
@@ -88,10 +113,9 @@ function WatchlistRow({ entry, onRemove, isRemoving }) {
         )}
       </div>
       <button
-        onClick={() => onRemove(entry.symbol)}
-        disabled={isRemoving}
+        onClick={() => onRequestRemove(entry.symbol)}
         aria-label={`Remove ${entry.symbol}`}
-        className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-40"
+        className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
       >
         <Trash2 size={15} aria-hidden="true" />
       </button>
@@ -104,10 +128,8 @@ function WatchlistRow({ entry, onRemove, isRemoving }) {
 // ---------------------------------------------------------------------------
 function friendlyAddError(rawMessage) {
   if (!rawMessage) return null
-  // Duplicate symbol — check before FK since "duplicate key violates unique constraint" contains "violates"
   if (rawMessage.includes("duplicate") || rawMessage.includes("unique") || rawMessage.includes("409") || rawMessage.includes("23505"))
     return "That symbol is already in your watchlist."
-  // FK violation: symbol not in tickers table
   if (rawMessage.includes("foreign key") || rawMessage.includes("violates") || rawMessage.includes("422"))
     return "Symbol not found in the universe. Run the Screener first to sync tickers, then try again."
   return "Failed to add symbol. Check the ticker and try again."
@@ -115,14 +137,32 @@ function friendlyAddError(rawMessage) {
 
 export default function WatchlistPage() {
   const queryClient = useQueryClient()
-  const [addError,    setAddError]    = useState(null)
-  const [removeError, setRemoveError] = useState(null)
-  const [removing,    setRemoving]    = useState(null)
+  const [addError,       setAddError]       = useState(null)
+  const [removeError,    setRemoveError]     = useState(null)
+  const [pendingDelete,  setPendingDelete]   = useState(null) // symbol awaiting confirm
+  const [activeGroup,    setActiveGroup]     = useState(null)
 
   const { data: entries = [], isLoading } = useQuery({
     queryKey: ["watchlist"],
     queryFn: () => api.get("/watchlist"),
   })
+
+  // Unique sorted group names derived from watchlist
+  const groupNames = useMemo(() => {
+    const names = entries
+      .map((e) => e.group_name)
+      .filter(Boolean)
+    return [...new Set(names)].sort()
+  }, [entries])
+
+  // Group options for combobox (plain strings)
+  const groupOptions = useMemo(() => groupNames, [groupNames])
+
+  // Filtered + grouped display list
+  const displayed = useMemo(() => {
+    if (!activeGroup) return entries
+    return entries.filter((e) => e.group_name === activeGroup)
+  }, [entries, activeGroup])
 
   const { mutate: addEntry, isPending: isAdding } = useMutation({
     mutationFn: (body) => api.post("/watchlist", body),
@@ -133,23 +173,36 @@ export default function WatchlistPage() {
     onError: (err) => setAddError(friendlyAddError(err.message)),
   })
 
-  const { mutate: removeEntry } = useMutation({
-    mutationFn: (symbol) => api.delete(`/watchlist/${symbol}`),
-    onSuccess: () => {
-      setRemoving(null)
-      setRemoveError(null)
-      queryClient.invalidateQueries({ queryKey: ["watchlist"] })
+  const { mutate: removeEntry, isPending: isRemoving } = useMutation({
+    mutationFn: (symbol) => api.delete(`/watchlist/${encodeURIComponent(symbol)}`),
+    onMutate: async (symbol) => {
+      // Optimistic: remove the row immediately
+      await queryClient.cancelQueries({ queryKey: ["watchlist"] })
+      const previous = queryClient.getQueryData(["watchlist"])
+      queryClient.setQueryData(["watchlist"], (old) =>
+        (old ?? []).filter((e) => e.symbol !== symbol)
+      )
+      return { previous }
     },
-    onError: (_, symbol) => {
-      setRemoving(null)
+    onSuccess: () => {
+      setPendingDelete(null)
+      setRemoveError(null)
+    },
+    onError: (err, symbol, context) => {
+      // Revert optimistic update
+      queryClient.setQueryData(["watchlist"], context.previous)
+      setPendingDelete(null)
       setRemoveError(`Failed to remove ${symbol}. Please try again.`)
     },
   })
 
-  function handleRemove(symbol) {
-    setRemoving(symbol)
+  function handleRequestRemove(symbol) {
+    setPendingDelete(symbol)
     setRemoveError(null)
-    removeEntry(symbol)
+  }
+
+  function handleConfirmRemove() {
+    if (pendingDelete) removeEntry(pendingDelete)
   }
 
   return (
@@ -161,7 +214,18 @@ export default function WatchlistPage() {
         </p>
       </div>
 
-      <AddForm onAdd={addEntry} isAdding={isAdding} error={addError} />
+      <AddForm
+        onAdd={addEntry}
+        isAdding={isAdding}
+        error={addError}
+        groupOptions={groupOptions}
+      />
+
+      <GroupFilterBar
+        groups={groupNames}
+        active={activeGroup}
+        onSelect={setActiveGroup}
+      />
 
       <div className="rounded-lg border border-border bg-card">
         {isLoading && (
@@ -178,12 +242,17 @@ export default function WatchlistPage() {
           </div>
         )}
 
-        {!isLoading && entries.length > 0 && entries.map((entry) => (
+        {!isLoading && displayed.length === 0 && entries.length > 0 && (
+          <div className="px-4 py-10 text-center text-muted-foreground text-sm">
+            No entries in this group.
+          </div>
+        )}
+
+        {!isLoading && displayed.map((entry) => (
           <WatchlistRow
             key={entry.id}
             entry={entry}
-            onRemove={handleRemove}
-            isRemoving={removing === entry.symbol}
+            onRequestRemove={handleRequestRemove}
           />
         ))}
       </div>
@@ -197,6 +266,17 @@ export default function WatchlistPage() {
           {entries.length} ticker{entries.length !== 1 ? "s" : ""}
         </p>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => { if (!open) setPendingDelete(null) }}
+        title={`Remove ${pendingDelete} from watchlist?`}
+        description="This cannot be undone."
+        confirmLabel="Remove"
+        confirmVariant="destructive"
+        onConfirm={handleConfirmRemove}
+        isPending={isRemoving}
+      />
     </div>
   )
 }

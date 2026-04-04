@@ -32,6 +32,7 @@ export function Combobox({
   placeholder = "Search…",
   allowNew = false,
   className,
+  "aria-label": ariaLabel,
 }) {
   const [open, setOpen] = useState(false)
   const [highlighted, setHighlighted] = useState(0)
@@ -124,6 +125,7 @@ export function Combobox({
         placeholder={placeholder}
         autoComplete="off"
         spellCheck={false}
+        aria-label={ariaLabel}
         className={cn(
           "w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm",
           "placeholder:text-muted-foreground",

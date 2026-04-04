@@ -19,6 +19,7 @@ async function request(path, options = {}) {
     console.error(`[api] ${options.method ?? "GET"} ${path} → ${res.status}`, text)
     throw new Error(`API ${res.status}: ${text}`)
   }
+  if (res.status === 204) return null
   return res.json()
 }
 

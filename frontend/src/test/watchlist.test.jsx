@@ -103,20 +103,23 @@ it("new entry appears in list after successful add", async () => {
   await waitFor(() => expect(screen.getByText("TSLA")).toBeInTheDocument())
 })
 
-// 5. Remove button calls DELETE
+// 5. Remove button opens confirm dialog → confirming calls DELETE
 it("clicking remove calls DELETE /watchlist/{symbol}", async () => {
   const handler = vi.fn()
   server.use(
     http.delete("http://localhost:8000/watchlist/:symbol", ({ params }) => {
-      handler(params.symbol)
+      handler(decodeURIComponent(params.symbol))
       return new HttpResponse(null, { status: 204 })
     })
   )
 
-  renderPage()
+  const { user } = renderPage()
   await waitFor(() => screen.getByText("AAPL"))
 
-  fireEvent.click(screen.getByRole("button", { name: /remove aapl/i }))
+  // Click trash → confirm dialog opens
+  await user.click(screen.getByRole("button", { name: /remove aapl/i }))
+  // Click the "Remove" confirm button in the dialog
+  await user.click(screen.getByRole("button", { name: /^remove$/i }))
   await waitFor(() => expect(handler).toHaveBeenCalledWith("AAPL"))
 })
 
@@ -189,9 +192,12 @@ it("shows inline error when DELETE /watchlist/{symbol} fails", async () => {
       HttpResponse.json({ detail: "Server error" }, { status: 500 })
     )
   )
-  renderPage()
+  const { user } = renderPage()
   await waitFor(() => screen.getByText("AAPL"))
-  fireEvent.click(screen.getByRole("button", { name: /remove aapl/i }))
+  // Click trash → confirm dialog opens
+  await user.click(screen.getByRole("button", { name: /remove aapl/i }))
+  // Click the "Remove" confirm button in the dialog
+  await user.click(screen.getByRole("button", { name: /^remove$/i }))
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toMatch(/failed to remove aapl/i)
   )
