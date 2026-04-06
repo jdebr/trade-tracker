@@ -239,9 +239,12 @@ def get_status() -> dict:
 
     next_run = None
     if _scheduler:
-        job = _scheduler.get_job("watchlist_scan")
-        if job and job.next_run_time:
-            next_run = job.next_run_time.isoformat()
+        next_run_dt = None
+        for job in _scheduler.get_jobs():
+            if job.next_run_time and (next_run_dt is None or job.next_run_time < next_run_dt):
+                next_run_dt = job.next_run_time
+        if next_run_dt:
+            next_run = next_run_dt.isoformat()
 
     return {
         "enabled":                        SCHEDULER_ENABLED,
@@ -252,7 +255,7 @@ def get_status() -> dict:
         "last_run_result":                _last_run_result,
         "cooldown_minutes":               SCAN_COOLDOWN_MINUTES,
         "seconds_until_cooldown_expires": _seconds_until_cooldown_expires(),
-        "schedule":                       f"{SCHEDULER_HOUR:02d}:{SCHEDULER_MINUTE:02d} ET Mon–Fri",
+        "schedule":                       "Intraday 5×/day · EOD 16:15 ET · Mon–Fri",
         "td_api_usage":                   fetch_td_api_usage(),
     }
 
