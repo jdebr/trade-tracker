@@ -152,8 +152,8 @@ export function Combobox({
       {open && displayList.length > 0 && (
         <ul
           className={cn(
-            "absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border",
-            "bg-popover py-1 shadow-md text-sm"
+            "absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-zinc-700",
+            "bg-zinc-900 py-1 shadow-md text-sm text-zinc-100"
           )}
           role="listbox"
         >
@@ -165,8 +165,8 @@ export function Combobox({
                   role="option"
                   aria-selected={i === highlighted}
                   className={cn(
-                    "cursor-pointer px-3 py-1.5 text-sm text-muted-foreground",
-                    i === highlighted && "bg-accent text-accent-foreground"
+                    "cursor-pointer px-3 py-1.5 text-sm text-zinc-400",
+                    i === highlighted && "bg-zinc-700 text-zinc-100"
                   )}
                   onMouseDown={(e) => { e.preventDefault(); handleSelect(opt) }}
                   onMouseEnter={() => setHighlighted(i)}
@@ -184,13 +184,13 @@ export function Combobox({
                 aria-selected={i === highlighted}
                 className={cn(
                   "cursor-pointer px-3 py-1.5",
-                  i === highlighted && "bg-accent text-accent-foreground"
+                  i === highlighted ? "bg-zinc-700 text-zinc-100" : "text-zinc-100"
                 )}
                 onMouseDown={(e) => { e.preventDefault(); handleSelect(opt) }}
                 onMouseEnter={() => setHighlighted(i)}
               >
                 <span className="font-mono">{sym}</span>
-                {name && <span className="ml-2 text-muted-foreground">{name}</span>}
+                {name && <span className={cn("ml-2", i === highlighted ? "text-zinc-300" : "text-zinc-400")}>{name}</span>}
               </li>
             )
           })}

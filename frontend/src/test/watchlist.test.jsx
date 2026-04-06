@@ -63,30 +63,32 @@ it("submits add form with uppercased symbol and group", async () => {
   const { user } = renderPage()
   await waitFor(() => screen.getByText("AAPL"))
 
-  await user.type(screen.getByLabelText(/ticker symbol/i), "tsla")
-  await user.type(screen.getByLabelText(/group name/i), "EV")
+  await user.type(screen.getByLabelText(/ticker symbol/i), "nvda")
+  await user.type(screen.getByLabelText(/group name/i), "Tech")
+  await waitFor(() => expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled())
   await user.click(screen.getByRole("button", { name: /^add$/i }))
 
   await waitFor(() => expect(handler).toHaveBeenCalledWith(
-    expect.objectContaining({ symbol: "TSLA", group_name: "EV" })
+    expect.objectContaining({ symbol: "NVDA", group_name: "Tech" })
   ))
 })
 
 // 4. Added entry appears after success
 it("new entry appears in list after successful add", async () => {
-  // After add, GET /watchlist returns the updated list
-  let callCount = 0
+  // Flag flips after POST so subsequent GET /watchlist returns the updated list
+  let addPosted = false
   server.use(
-    http.get("http://localhost:8000/watchlist", () => {
-      callCount++
-      if (callCount === 1) return HttpResponse.json(MOCK_WATCHLIST)
-      return HttpResponse.json([
-        ...MOCK_WATCHLIST,
-        { id: "10", symbol: "TSLA", group_name: null, added_at: new Date().toISOString() },
-      ])
-    }),
+    http.get("http://localhost:8000/watchlist", () =>
+      addPosted
+        ? HttpResponse.json([
+            ...MOCK_WATCHLIST,
+            { id: "10", symbol: "NVDA", group_name: null, added_at: new Date().toISOString() },
+          ])
+        : HttpResponse.json(MOCK_WATCHLIST)
+    ),
     http.post("http://localhost:8000/watchlist", async ({ request }) => {
       const body = await request.json()
+      addPosted = true
       return HttpResponse.json(
         { id: "10", symbol: body.symbol, group_name: null, added_at: new Date().toISOString() },
         { status: 201 }
@@ -97,10 +99,14 @@ it("new entry appears in list after successful add", async () => {
   const { user } = renderPage()
   await waitFor(() => screen.getByText("AAPL"))
 
-  await user.type(screen.getByLabelText(/ticker symbol/i), "TSLA")
+  await user.type(screen.getByLabelText(/ticker symbol/i), "NVDA")
+  await waitFor(() => expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled())
   await user.click(screen.getByRole("button", { name: /^add$/i }))
 
-  await waitFor(() => expect(screen.getByText("TSLA")).toBeInTheDocument())
+  // After add + cache invalidation, the NVDA row should appear in the list
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /remove nvda/i })).toBeInTheDocument()
+  )
 })
 
 // 5. Remove button opens confirm dialog → confirming calls DELETE
@@ -146,7 +152,8 @@ it("shows screener-first guidance on FK constraint violation", async () => {
   )
   const { user } = renderPage()
   await waitFor(() => screen.getByText("AAPL"))
-  await user.type(screen.getByLabelText(/ticker symbol/i), "ZZZZ")
+  await user.type(screen.getByLabelText(/ticker symbol/i), "XOM")
+  await waitFor(() => expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled())
   await user.click(screen.getByRole("button", { name: /^add$/i }))
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toMatch(/run the screener first/i)
@@ -163,6 +170,7 @@ it("shows duplicate-symbol message on 409 conflict", async () => {
   const { user } = renderPage()
   await waitFor(() => screen.getByText("AAPL"))
   await user.type(screen.getByLabelText(/ticker symbol/i), "AAPL")
+  await waitFor(() => expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled())
   await user.click(screen.getByRole("button", { name: /^add$/i }))
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toMatch(/already in your watchlist/i)
@@ -178,7 +186,8 @@ it("shows fallback error for unexpected add failures", async () => {
   )
   const { user } = renderPage()
   await waitFor(() => screen.getByText("AAPL"))
-  await user.type(screen.getByLabelText(/ticker symbol/i), "TEST")
+  await user.type(screen.getByLabelText(/ticker symbol/i), "XOM")
+  await waitFor(() => expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled())
   await user.click(screen.getByRole("button", { name: /^add$/i }))
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toMatch(/failed to add symbol/i)

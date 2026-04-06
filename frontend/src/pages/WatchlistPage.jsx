@@ -31,14 +31,18 @@ const groupColour = (() => {
 // ---------------------------------------------------------------------------
 // Add form
 // ---------------------------------------------------------------------------
-function AddForm({ onAdd, isAdding, error, groupOptions, tickerOptions }) {
+function AddForm({ onAdd, isAdding, error, groupOptions, tickerOptions, symbolSource, onToggleSource }) {
   const [symbol, setSymbol] = useState("")
   const [group,  setGroup]  = useState("")
+
+  const symbolIsValid = !!tickerOptions.find(
+    (t) => (t.symbol || t).toUpperCase() === symbol.trim().toUpperCase()
+  )
 
   function handleSubmit(e) {
     e.preventDefault()
     const sym = symbol.trim().toUpperCase()
-    if (!sym) return
+    if (!sym || !symbolIsValid) return
     onAdd({ symbol: sym, group_name: group.trim() || null })
     setSymbol("")
     setGroup("")
@@ -46,15 +50,37 @@ function AddForm({ onAdd, isAdding, error, groupOptions, tickerOptions }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-wrap gap-2 mb-6">
-      <Combobox
-        value={symbol}
-        onChange={setSymbol}
-        options={tickerOptions}
-        placeholder="Symbol (e.g. AAPL)"
-        allowNew={false}
-        aria-label="Ticker symbol"
-        className="w-44"
-      />
+      <div className="flex flex-col gap-1">
+        <Combobox
+          value={symbol}
+          onChange={setSymbol}
+          options={tickerOptions}
+          placeholder="Symbol (e.g. AAPL)"
+          allowNew={false}
+          aria-label="Ticker symbol"
+          className="w-44"
+        />
+        {/* Source toggle */}
+        <div className="flex rounded-md border border-border overflow-hidden w-44 text-xs">
+          {["Universe", "Screener"].map((label) => {
+            const val = label.toLowerCase()
+            return (
+              <button
+                key={val}
+                type="button"
+                onClick={() => { onToggleSource(val); setSymbol("") }}
+                className={`flex-1 px-2 py-1 font-medium transition-colors ${
+                  symbolSource === val
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-background text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
       <Combobox
         value={group}
         onChange={setGroup}
@@ -64,7 +90,7 @@ function AddForm({ onAdd, isAdding, error, groupOptions, tickerOptions }) {
         aria-label="Group name"
         className="w-44"
       />
-      <Button type="submit" disabled={isAdding || !symbol.trim()} size="sm">
+      <Button type="submit" disabled={isAdding || !symbolIsValid} size="sm" className="self-start">
         {isAdding ? "Adding…" : "Add"}
       </Button>
       {error && (
@@ -141,6 +167,7 @@ export default function WatchlistPage() {
   const [removeError,    setRemoveError]     = useState(null)
   const [pendingDelete,  setPendingDelete]   = useState(null) // symbol awaiting confirm
   const [activeGroup,    setActiveGroup]     = useState(null)
+  const [symbolSource,   setSymbolSource]    = useState("universe")
 
   const { data: entries = [], isLoading } = useQuery({
     queryKey: ["watchlist"],
@@ -153,7 +180,19 @@ export default function WatchlistPage() {
     staleTime: 60 * 60 * 1000,
   })
 
-  const tickerOptions = useMemo(() => tickerList, [tickerList])
+  const { data: screenerResults = [] } = useQuery({
+    queryKey: ["screener-results"],
+    queryFn: () => api.get("/screener/results"),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const tickerOptions = useMemo(() => {
+    if (symbolSource === "screener") {
+      const screenerSymbols = new Set(screenerResults.map((r) => r.symbol))
+      return tickerList.filter((t) => screenerSymbols.has(t.symbol))
+    }
+    return tickerList
+  }, [tickerList, screenerResults, symbolSource])
 
   // Unique sorted group names derived from watchlist
   const groupNames = useMemo(() => {
@@ -228,6 +267,8 @@ export default function WatchlistPage() {
         error={addError}
         groupOptions={groupOptions}
         tickerOptions={tickerOptions}
+        symbolSource={symbolSource}
+        onToggleSource={setSymbolSource}
       />
 
       <GroupFilterBar
