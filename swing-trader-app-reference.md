@@ -561,20 +561,21 @@ Iterated on the live deployed app — verified scheduled jobs, fixed rough edges
 
 ---
 
-### 12. ⬜ App User Guide
+### 12. 🔄 App User Guide
 
 Document the app for a user who didn't build it — covers setup, daily workflow, and what each feature does. Also serves as reference for LLM tooling and informs integration/E2E test scenarios.
 
 **Subtasks**
-- [ ] First-time setup: clone repo, configure `.env`, sync universe, run screener, add watchlist tickers
-- [ ] Weekly workflow walkthrough: Sunday screener run → pick trades → monitor scanner → act on alerts
-- [ ] Page-by-page feature reference: what each control does, what errors mean, how to recover
-- [ ] Scheduler controls: how to pause, resume, trigger manually, interpret status bar
-- [ ] Alert types: what each condition means and how to interpret it for a trade decision
-- [ ] Troubleshooting: common issues (empty tickers, stale cache, cooldown, etc.)
+- [x] First-time setup: sync universe, run screener, add watchlist tickers
+- [x] Weekly workflow walkthrough: Sunday screener run → pick trades → monitor scanner → act on alerts
+- [x] Page-by-page feature reference: what each control does, what errors mean, how to recover
+- [x] Scheduler controls: how to pause, resume, trigger manually, interpret status bar
+- [x] Alert types: what each condition means and how to interpret it for a trade decision
+- [x] Troubleshooting: common issues (empty tickers, stale cache, cooldown, etc.)
+- [ ] Review pass: verify accuracy against live app; fill any gaps
 
 **Technical notes**
-- Written as a standalone Markdown doc (`docs/user-guide.md` or similar)
+- Draft at `docs/user-guide.md`
 - Should be accurate enough that someone with no codebase knowledge can operate the app
 - Will directly inform E2E test scenarios (milestone 14) and LLM tool descriptions (milestone 15)
 
