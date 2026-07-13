@@ -86,13 +86,13 @@ function SchedulerStatusBar({ onRunNow, isRunning, scanError }) {
           </span>
         )}
         <span>
-          API credits:{" "}
-          <strong className="text-foreground">
-            {status?.td_api_usage
-              ? `${status.td_api_usage.current_usage}/${status.td_api_usage.plan_limit}`
-              : "—/—"}
-          </strong>{" "}
-          today
+          {(() => {
+            const u = status?.td_api_usage
+            if (!u) return <>API credits: <strong className="text-foreground">—/—</strong> today</>
+            if (u.daily_usage != null && u.daily_limit != null)
+              return <>API credits: <strong className="text-foreground">{u.daily_usage}/{u.daily_limit}</strong> today</>
+            return <>API credits: <strong className="text-foreground">{u.current_usage}/{u.plan_limit}</strong> /min</>
+          })()}
         </span>
       </div>
       <div className="flex items-center gap-2">

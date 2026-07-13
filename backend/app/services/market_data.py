@@ -156,10 +156,15 @@ def fetch_td_api_usage() -> dict | None:
         if status is not None and status != "ok":
             logger.warning("Twelve Data api_usage error: %s", payload.get("message"))
             return None
+        logger.debug("Twelve Data api_usage payload: %s", payload)
         result = {
-            "current_usage": payload.get("current_usage"),
-            "plan_limit":    payload.get("plan_limit"),
-            "timestamp":     payload.get("timestamp"),
+            # Per-minute fields (what Twelve Data's free tier plan_limit tracks)
+            "current_usage":      payload.get("current_usage"),
+            "plan_limit":         payload.get("plan_limit"),
+            # Daily fields — present on some plan tiers; may be None on free tier
+            "daily_usage":        payload.get("daily_usage"),
+            "daily_limit":        payload.get("daily_limit"),
+            "timestamp":          payload.get("timestamp"),
         }
         _api_usage_cache = result
         _api_usage_cache_time = now
