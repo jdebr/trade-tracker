@@ -4,7 +4,10 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import ALLOWED_ORIGINS
 from app.dependencies import get_current_user
-from app.routers import health, watchlist, ohlcv, indicators, screener, alerts, scheduler, tickers, status
+from app.routers import (
+    health, watchlist, ohlcv, indicators, screener, alerts, scheduler,
+    tickers, status, positions, settings,
+)
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
@@ -40,3 +43,5 @@ app.include_router(screener.router,    dependencies=[Depends(get_current_user)])
 app.include_router(alerts.router,      dependencies=[Depends(get_current_user)])
 app.include_router(scheduler.router,   dependencies=[Depends(get_current_user)])
 app.include_router(tickers.router,     dependencies=[Depends(get_current_user)])
+app.include_router(positions.router,   dependencies=[Depends(get_current_user)])
+app.include_router(settings.router,    dependencies=[Depends(get_current_user)])

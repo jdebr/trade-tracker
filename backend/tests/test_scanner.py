@@ -20,7 +20,9 @@ Criteria:
 """
 
 from datetime import date
-from app.services.scanner import _evaluate_conditions
+from unittest.mock import MagicMock, patch
+
+from app.services.scanner import _evaluate_conditions, run_watchlist_scan
 
 TODAY = date(2026, 3, 29)
 NO_EXISTING: set[tuple[str, str]] = set()
@@ -295,3 +297,103 @@ def test_alert_price_at_trigger_set_from_market_data():
     )
     for alert in alerts:
         assert alert["price_at_trigger"] == 175.50
+
+
+# ---------------------------------------------------------------------------
+# 16–18. run_watchlist_scan orchestration
+#
+# The EOD scan refreshes data for the union of watchlist symbols and open-position
+# symbols, but evaluates opportunity conditions for the watchlist only. Position
+# conditions run afterwards, against the day's closes.
+# ---------------------------------------------------------------------------
+
+def _scan_stack(watchlist, position_symbols, monitor_mock=None):
+    """Patch every collaborator of run_watchlist_scan. Returns a list of patchers."""
+    monitor_mock = monitor_mock or MagicMock(return_value={
+        "positions_monitored": 0, "alerts_created": 0, "stops_trailed": 0,
+    })
+    return [
+        patch("app.services.scanner._get_watchlist_symbols", return_value=watchlist),
+        patch("app.services.scanner.pos_svc.get_open_position_symbols", return_value=position_symbols),
+        patch("app.services.scanner._fetch_ohlcv_for_symbols"),
+        patch("app.services.scanner._get_prior_snapshots", return_value={}),
+        patch("app.services.scanner._get_existing_alerts_today", return_value=set()),
+        patch("app.services.scanner.run_position_monitor", monitor_mock),
+        patch("app.services.scanner.get_client", return_value=MagicMock()),
+    ], monitor_mock
+
+
+def test_scan_refreshes_indicators_for_position_symbols_off_the_watchlist():
+    """
+    A position can be held in a name that is no longer on the watchlist. Its ATR
+    still has to be recomputed each day or the trailing stop has stale data to
+    work from — so the OHLCV/indicator refresh must cover the union.
+    """
+    compute_mock = MagicMock(return_value=[])
+    patches, _ = _scan_stack(watchlist=["AAPL"], position_symbols=["TSLA"])
+
+    with patch("app.services.scanner._compute_indicators_for_symbols", compute_mock):
+        for p in patches:
+            p.start()
+        try:
+            result = run_watchlist_scan()
+        finally:
+            for p in patches:
+                p.stop()
+
+    assert result.symbols_scanned == 2
+    assert compute_mock.call_args[0][0] == ["AAPL", "TSLA"]
+
+
+def test_scan_evaluates_opportunity_conditions_for_watchlist_symbols_only():
+    """
+    You're already in TSLA — "here's a trade idea" alerts on it would be noise.
+    Only watchlist symbols get opportunity conditions.
+    """
+    snapshots = [
+        {**_snap(symbol="AAPL", rsi=25.0), "symbol": "AAPL"},
+        {**_snap(symbol="TSLA", rsi=25.0), "symbol": "TSLA"},
+    ]
+    market = {
+        "AAPL": {"vol_3d": 1, "vol_20d": 2, "last_close": 150.0},
+        "TSLA": {"vol_3d": 1, "vol_20d": 2, "last_close": 250.0},
+    }
+    patches, _ = _scan_stack(watchlist=["AAPL"], position_symbols=["TSLA"])
+
+    with patch("app.services.scanner._compute_indicators_for_symbols", return_value=snapshots), \
+         patch("app.services.scanner._get_market_data", return_value=market):
+        for p in patches:
+            p.start()
+        try:
+            result = run_watchlist_scan()
+        finally:
+            for p in patches:
+                p.stop()
+
+    # Both are deeply oversold, but only AAPL is on the watchlist.
+    assert result.alerts_created == 1
+
+
+def test_scan_hands_closing_prices_to_the_position_monitor():
+    snapshots = [{**_snap(symbol="TSLA"), "symbol": "TSLA"}]
+    market    = {"TSLA": {"vol_3d": 1, "vol_20d": 2, "last_close": 250.0}}
+
+    monitor_mock = MagicMock(return_value={
+        "positions_monitored": 1, "alerts_created": 1, "stops_trailed": 1,
+    })
+    patches, _ = _scan_stack(watchlist=[], position_symbols=["TSLA"], monitor_mock=monitor_mock)
+
+    with patch("app.services.scanner._compute_indicators_for_symbols", return_value=snapshots), \
+         patch("app.services.scanner._get_market_data", return_value=market):
+        for p in patches:
+            p.start()
+        try:
+            result = run_watchlist_scan()
+        finally:
+            for p in patches:
+                p.stop()
+
+    assert monitor_mock.call_args[0][0] == {"TSLA": 250.0}
+    assert result.positions_monitored     == 1
+    assert result.position_alerts_created == 1
+    assert result.stops_trailed           == 1

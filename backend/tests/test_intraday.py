@@ -16,6 +16,7 @@ Criteria:
 12.  Scheduler registers five intraday poll jobs at the correct ET times
 """
 
+from contextlib import ExitStack
 from datetime import date
 from unittest.mock import MagicMock, patch, call
 import asyncio
@@ -44,6 +45,33 @@ def _snap(symbol="AAPL", bb_upper=155.0, bb_lower=145.0, ema_8=150.0):
         "bb_lower": bb_lower,
         "ema_8":    ema_8,
     }
+
+
+_NO_POSITIONS = {
+    "positions_monitored": 0,
+    "alerts_created":      0,
+    "alerts_skipped":      0,
+    "stops_trailed":       0,
+}
+
+
+def _no_open_positions():
+    """
+    Stub out the position side of the poll.
+
+    run_intraday_poll() polls the union of watchlist and open-position symbols and
+    then hands the price map to the position monitor. These tests cover the
+    opportunity half only — position alerts have their own suite in
+    test_position_monitor.py — so the position half is stubbed to empty.
+    """
+    stack = ExitStack()
+    stack.enter_context(
+        patch("app.services.intraday.pos_svc.get_open_position_symbols", return_value=[])
+    )
+    stack.enter_context(
+        patch("app.services.intraday.run_position_monitor", return_value=dict(_NO_POSITIONS))
+    )
+    return stack
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +187,8 @@ def test_run_intraday_poll_creates_alerts():
     client_mock.table.return_value.insert.return_value.execute = insert_mock
     client_mock.table.return_value.select.return_value.execute.return_value.data = []
 
-    with patch("app.services.intraday._get_watchlist_symbols", return_value=["AAPL"]), \
+    with _no_open_positions(), \
+         patch("app.services.intraday._get_watchlist_symbols", return_value=["AAPL"]), \
          patch("app.services.intraday.fetch_intraday_quote", return_value=144.0), \
          patch("app.services.intraday.get_latest_snapshots", return_value=[fake_snapshot]), \
          patch("app.services.intraday._get_existing_intraday_alerts_today", return_value=set()), \
@@ -177,7 +206,8 @@ def test_run_intraday_poll_creates_alerts():
 def test_run_intraday_poll_skips_symbol_with_no_snapshot():
     from app.services.intraday import run_intraday_poll
 
-    with patch("app.services.intraday._get_watchlist_symbols", return_value=["AAPL"]), \
+    with _no_open_positions(), \
+         patch("app.services.intraday._get_watchlist_symbols", return_value=["AAPL"]), \
          patch("app.services.intraday.fetch_intraday_quote", return_value=150.0), \
          patch("app.services.intraday.get_latest_snapshots", return_value=[]),  \
          patch("app.services.intraday._get_existing_intraday_alerts_today", return_value=set()), \
@@ -201,7 +231,8 @@ def test_run_intraday_poll_continues_past_fetch_failure():
 
     fake_snap_good = _snap("GOOD", bb_upper=155.0, bb_lower=145.0, ema_8=150.0)
 
-    with patch("app.services.intraday._get_watchlist_symbols", return_value=["BAD", "GOOD"]), \
+    with _no_open_positions(), \
+         patch("app.services.intraday._get_watchlist_symbols", return_value=["BAD", "GOOD"]), \
          patch("app.services.intraday.fetch_intraday_quote", side_effect=fake_quote), \
          patch("app.services.intraday.get_latest_snapshots", return_value=[fake_snap_good]), \
          patch("app.services.intraday._get_existing_intraday_alerts_today", return_value=set()), \
@@ -221,7 +252,8 @@ def test_run_intraday_poll_empty_watchlist():
 
     fetch_mock = MagicMock()
 
-    with patch("app.services.intraday._get_watchlist_symbols", return_value=[]), \
+    with _no_open_positions(), \
+         patch("app.services.intraday._get_watchlist_symbols", return_value=[]), \
          patch("app.services.intraday.fetch_intraday_quote", fetch_mock):
         result = run_intraday_poll()
 
@@ -236,12 +268,47 @@ def test_run_intraday_poll_empty_watchlist():
 def test_run_intraday_poll_returns_summary_keys():
     from app.services.intraday import run_intraday_poll
 
-    with patch("app.services.intraday._get_watchlist_symbols", return_value=[]), \
+    with _no_open_positions(), \
+         patch("app.services.intraday._get_watchlist_symbols", return_value=[]), \
          patch("app.services.intraday.fetch_intraday_quote", return_value=150.0):
         result = run_intraday_poll()
 
-    for key in ("symbols_polled", "alerts_created", "alerts_skipped", "failed"):
+    for key in (
+        "symbols_polled", "alerts_created", "alerts_skipped", "failed",
+        "positions_monitored", "position_alerts_created", "stops_trailed",
+    ):
         assert key in result, f"Missing key: {key}"
+
+
+# ---------------------------------------------------------------------------
+# 11b. run_intraday_poll: polls the union of watchlist and open-position symbols
+# ---------------------------------------------------------------------------
+
+def test_run_intraday_poll_polls_position_symbols_not_on_the_watchlist():
+    """
+    You can hold a position in a name you have since removed from the watchlist.
+    Polling the watchlist alone would leave that trade unmonitored — its stop
+    could be blown through without an alert. The poll must cover the union.
+    """
+    from app.services.intraday import run_intraday_poll
+
+    monitor_mock = MagicMock(return_value=dict(_NO_POSITIONS))
+
+    with patch("app.services.intraday._get_watchlist_symbols", return_value=["AAPL"]), \
+         patch("app.services.intraday.pos_svc.get_open_position_symbols", return_value=["TSLA"]), \
+         patch("app.services.intraday.fetch_intraday_quote", side_effect=lambda s: 150.0), \
+         patch("app.services.intraday.get_latest_snapshots", return_value=[]), \
+         patch("app.services.intraday._get_existing_intraday_alerts_today", return_value=set()), \
+         patch("app.services.intraday.run_position_monitor", monitor_mock), \
+         patch("app.services.intraday.get_client", return_value=MagicMock()):
+        result = run_intraday_poll()
+
+    # Both symbols were quoted, even though TSLA is not on the watchlist.
+    assert result["symbols_polled"] == 2
+
+    # The monitor received quotes for both — it is TSLA's only source of prices.
+    prices = monitor_mock.call_args[0][0]
+    assert set(prices) == {"AAPL", "TSLA"}
 
 
 # ---------------------------------------------------------------------------

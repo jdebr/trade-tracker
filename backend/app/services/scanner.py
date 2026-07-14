@@ -26,10 +26,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 
 from app.database import get_client
+from app.services import positions as pos_svc
 from app.services.indicator_cache import upsert_snapshots
 from app.services.indicators import compute_indicators
 from app.services.market_data import fetch_ohlcv
 from app.services.ohlcv_cache import get_cached_bars, is_cache_fresh, upsert_bars
+from app.services.position_monitor import run_position_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,10 @@ class ScanResult:
     indicators_skipped:    list[str] = field(default_factory=list)
     alerts_created:        int       = 0
     alerts_skipped_dedup:  int       = 0
+    # Position monitoring (open trades), run after the opportunity conditions.
+    positions_monitored:     int     = 0
+    position_alerts_created: int     = 0
+    stops_trailed:           int     = 0
     run_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict:
@@ -63,6 +69,9 @@ class ScanResult:
             "indicators_skipped":   self.indicators_skipped,
             "alerts_created":       self.alerts_created,
             "alerts_skipped_dedup": self.alerts_skipped_dedup,
+            "positions_monitored":     self.positions_monitored,
+            "position_alerts_created": self.position_alerts_created,
+            "stops_trailed":           self.stops_trailed,
             "run_at":               self.run_at.isoformat(),
         }
 
@@ -166,6 +175,9 @@ def _get_existing_alerts_today(
     """
     Return (symbol, alert_type) pairs already inserted for today.
     Used to prevent duplicate alerts on re-runs.
+
+    Filtered to category='opportunity': position alerts share this table but dedup
+    on position_id, and must not interfere with opportunity dedup.
     """
     if not symbols:
         return set()
@@ -174,6 +186,7 @@ def _get_existing_alerts_today(
         .table("alerts")
         .select("symbol,alert_type")
         .in_("symbol", symbols)
+        .eq("category", "opportunity")
         .eq("date", today.isoformat())
         .execute()
     )
@@ -216,6 +229,7 @@ def _evaluate_conditions(
             "symbol":           symbol,
             "date":             today.isoformat(),
             "alert_type":       alert_type,
+            "category":         "opportunity",
             "price_at_trigger": close_price,
             "details":          details,
             "acknowledged":     False,
@@ -276,41 +290,56 @@ def run_watchlist_scan() -> ScanResult:
     """
     Full watchlist scan pipeline.  Synchronous — safe to call from a thread.
     Returns ScanResult with per-step counts.
+
+    OHLCV and indicators are refreshed for the union of watchlist symbols and
+    open-position symbols: a position can be held in a name that is no longer on
+    the watchlist, and its ATR still has to be current or the trailing stop has
+    nothing to work from.
+
+    Opportunity conditions are evaluated for watchlist symbols only. Position
+    conditions run afterwards, against the day's closing prices.
     """
     result = ScanResult()
     today  = date.today()
 
-    # 1. Load watchlist
-    symbols = _get_watchlist_symbols()
-    if not symbols:
-        logger.info("Watchlist is empty — scan skipped")
+    # 1. Load symbols: watchlist ∪ open positions
+    watchlist_symbols = _get_watchlist_symbols()
+    position_symbols  = pos_svc.get_open_position_symbols()
+    all_symbols       = sorted(set(watchlist_symbols) | set(position_symbols))
+
+    if not all_symbols:
+        logger.info("Watchlist is empty and no open positions — scan skipped")
         return result
-    result.symbols_scanned = len(symbols)
-    logger.info("Scan starting for %d watchlist symbol(s)", len(symbols))
+    result.symbols_scanned = len(all_symbols)
+    logger.info(
+        "Scan starting — %d symbol(s): %d watchlist, %d open-position",
+        len(all_symbols), len(watchlist_symbols), len(position_symbols),
+    )
 
     # 2. Fetch fresh OHLCV (skips symbols whose cache is already current)
-    _fetch_ohlcv_for_symbols(symbols, result)
+    _fetch_ohlcv_for_symbols(all_symbols, result)
 
     # 3. Compute + upsert indicator snapshots
-    snapshots = _compute_indicators_for_symbols(symbols, result)
+    snapshots = _compute_indicators_for_symbols(all_symbols, result)
     if not snapshots:
         logger.warning("No indicator snapshots computed — no alerts will be generated")
         return result
 
     snap_by_sym = {s["symbol"]: s for s in snapshots}
-    computed    = list(snap_by_sym.keys())
 
-    # 4. Load supporting data
+    # 4. Opportunity conditions — watchlist symbols only
+    watchlist_set = set(watchlist_symbols)
+    computed      = [s for s in snap_by_sym if s in watchlist_set]
+
     priors      = _get_prior_snapshots(computed)
     market_data = _get_market_data(computed)
     existing    = _get_existing_alerts_today(computed, today)
 
-    # 5. Evaluate conditions
     new_alerts: list[dict] = []
     total_skipped = 0
-    for symbol, snap in snap_by_sym.items():
+    for symbol in computed:
         fired, skipped = _evaluate_conditions(
-            snap=snap,
+            snap=snap_by_sym[symbol],
             prior=priors.get(symbol),
             market_data=market_data.get(symbol),
             existing=existing,
@@ -321,19 +350,36 @@ def run_watchlist_scan() -> ScanResult:
 
     result.alerts_skipped_dedup = total_skipped
 
-    # 6. Insert new alerts
+    # 5. Insert new opportunity alerts
     if new_alerts:
         get_client().table("alerts").insert(new_alerts).execute()
     result.alerts_created = len(new_alerts)
 
+    # 6. Position conditions — evaluated against today's closes.
+    closes = {
+        sym: data["last_close"]
+        for sym, data in _get_market_data(list(snap_by_sym.keys())).items()
+    }
+    try:
+        pos_summary = run_position_monitor(closes)
+        result.positions_monitored     = pos_summary["positions_monitored"]
+        result.position_alerts_created = pos_summary["alerts_created"]
+        result.stops_trailed           = pos_summary["stops_trailed"]
+    except Exception as exc:
+        logger.error("Position monitor failed during EOD scan: %s", exc, exc_info=True)
+
     logger.info(
         "Scan complete — %d symbol(s), %d OHLCV fetched, %d cached, "
-        "%d indicators, %d alert(s) created, %d dedup-skipped",
+        "%d indicators, %d opportunity alert(s), %d dedup-skipped; "
+        "%d position(s) monitored, %d position alert(s), %d stop(s) trailed",
         result.symbols_scanned,
         result.ohlcv_fetched,
         result.ohlcv_cached,
         result.indicators_computed,
         result.alerts_created,
         result.alerts_skipped_dedup,
+        result.positions_monitored,
+        result.position_alerts_created,
+        result.stops_trailed,
     )
     return result
