@@ -1,16 +1,8 @@
 import { NavLink } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { BarChart2, ScanSearch, LineChart, Bell, BookMarked } from "lucide-react"
 import { api } from "@/lib/api"
+import { NAV_ITEMS } from "@/lib/nav"
 import { cn } from "@/lib/utils"
-
-const NAV_ITEMS = [
-  { to: "/screener",  label: "Screener",  Icon: ScanSearch },
-  { to: "/scanner",   label: "Scanner",   Icon: BarChart2  },
-  { to: "/watchlist", label: "Watchlist", Icon: BookMarked },
-  { to: "/chart",     label: "Chart",     Icon: LineChart  },
-  { to: "/alerts",    label: "Alerts",    Icon: Bell, showBadge: true },
-]
 
 export default function Sidebar() {
   const { data: alerts = [] } = useQuery({

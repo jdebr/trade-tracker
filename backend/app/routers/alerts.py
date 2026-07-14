@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from app.models.alerts import Alert, AlertAcknowledgeResponse, AlertBulkAcknowledgeResponse
 from app.database import get_client
@@ -12,8 +14,14 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 def list_alerts(
     limit: int = Query(50, ge=1, le=200),
     include_acknowledged: bool = Query(False),
+    category: Optional[str] = Query(None, pattern="^(opportunity|position)$"),
 ):
-    """Return alerts ordered by triggered_at descending."""
+    """
+    Return alerts ordered by triggered_at descending.
+
+    `category` filters to opportunity alerts (a trade idea) or position alerts
+    (a trade you hold hit its exit). Omit it to get both.
+    """
     query = (
         get_client()
         .table("alerts")
@@ -23,6 +31,8 @@ def list_alerts(
     )
     if not include_acknowledged:
         query = query.eq("acknowledged", False)
+    if category is not None:
+        query = query.eq("category", category)
 
     result = query.execute()
     return result.data

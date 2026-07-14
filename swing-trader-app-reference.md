@@ -54,7 +54,8 @@ Friday:
 
 ## Database Schema
 
-7 tables in Supabase (Postgres). Schema source of truth: `supabase/schema.sql`.
+9 tables in Supabase (Postgres). Schema source of truth: `supabase/schema.sql`.
+Migrations: `supabase/migrations/` — apply by hand in the Supabase SQL editor.
 
 | Table | Purpose |
 |---|---|
@@ -63,8 +64,12 @@ Friday:
 | `ohlcv_cache` | Daily OHLCV bars per symbol; `UNIQUE(symbol, date)` — upserted on every fetch |
 | `indicator_snapshots` | Latest computed indicator values per symbol/date — RSI, MACD, BB, EMA, ATR, OBV |
 | `screener_results` | Output of each screener run — rank, score, signal flags, run timestamp |
-| `alerts` | Fired alert conditions — type, symbol, price_at_trigger, details (JSONB) |
-| `trade_log` | (Schema only) Links to alerts + screener_results via nullable FKs — not yet surfaced in UI |
+| `alerts` | Fired alert conditions — type, symbol, `category`, `position_id`, details (JSONB) |
+| `positions` | Trades taken (real or simulated) — entry, exit plan, outcome, `entry_signals` (JSONB) |
+| `position_events` | Append-only log of everything that happened to a position |
+| `app_settings` | Single row — position sizing and exit-plan defaults |
+
+`trade_log` was dropped in migration 002. It was schema-only since M1 and never written to; `positions` + `position_events` replace it and carry the same `alert_id` / `screener_result_id` provenance FKs.
 
 ---
 
@@ -133,6 +138,67 @@ Evaluated against current quote price vs. the **last EOD indicator snapshot** (n
 
 Intraday alerts deduplicated per `(symbol, alert_type)` per calendar day — won't re-alert every 1.5 hours for the same condition.
 
+### Position Tracking & Exit Strategy
+
+The app closes the loop between "here's a trade idea" and "here's how it turned out."
+
+**Two kinds of alert.** Both live in the `alerts` table, separated by `category`:
+
+| Category | Meaning | Produced by |
+|---|---|---|
+| `opportunity` | "Here's a trade idea" | screener, EOD scanner, intraday poller |
+| `position` | "A trade you hold hit its exit" | `position_monitor.py` |
+
+Opportunity alerts dedup on `(symbol, alert_type, date)`; position alerts dedup on `(position_id, alert_type, date)` — two positions in one name each get their own alerts. The dedup queries filter on `category` so the two kinds can't suppress each other.
+
+**Position alert conditions** (evaluated on each intraday poll and the EOD scan):
+
+| Condition | Trigger |
+|---|---|
+| `stop_hit` | price ≤ `stop_price` |
+| `target_hit` | price ≥ `target_price` |
+| `approaching_target` | price within 2% of target |
+| `time_stop_reached` | held past `time_stop_date` without resolving |
+| `trailing_stop_moved` | chandelier stop ratcheted up |
+
+**Alerts only — never auto-closes.** The app has no broker connection and cannot know the real fill price. Inventing one would quietly corrupt the performance record, so closing is always a deliberate act by the user.
+
+**Symbol union.** An open position can be in a name that is no longer on the watchlist. Both the intraday poll and the EOD scan therefore cover `watchlist ∪ open-position symbols` — polling the watchlist alone would leave those trades unmonitored.
+
+### Exit Strategy Builder
+
+`POST /positions/plan` is a pure calculation (no persistence) that the UI calls on every input change. It returns the recommended plan **plus every alternative level side by side**, so levels can be compared rather than accepted on faith.
+
+| Stop methods | Target methods |
+|---|---|
+| `atr_multiple` (default, 2×), `percent`, `bb_lower`, `ema_21`, `ema_50`, `swing_low`, `manual` | `r_multiple` (default, 2R), `atr_multiple`, `percent`, `bb_upper`, `manual` |
+
+**Position sizing is fixed-fractional:** risk a constant % of the account (default 1%) on every trade, and let the stop distance determine the share count.
+
+```
+risk_per_share = entry − stop
+shares         = floor((account_size × risk_pct / 100) / risk_per_share)
+risk_amount    = shares × risk_per_share      # this is 1R in dollars
+```
+
+A tight stop buys more shares, a wide stop fewer — but the dollars at risk are the same either way. **That is what makes R-multiples comparable across trades**, and it's the foundation the entire reporting layer rests on.
+
+`initial_stop_price` is frozen at entry and never mutates, even when a trailing stop ratchets `stop_price` up. It is the denominator of every R-multiple the trade will ever report; letting it move would flatter every winner.
+
+Guard rails: a stop at or above entry is a **hard error** (there's no risk to divide by). Thin R:R, over-concentration, an unusually wide stop, and a 0-share risk budget are **advisory warnings** — the plan still builds.
+
+### Simulation
+
+`positions.is_simulated` defaults to **true** — real money is opt-in, never the default. Simulated and real results are never blended into one aggregate unless explicitly requested, and the Reports page warns when you do: a paper trade you'd never actually have taken, averaged with real fills, describes a strategy nobody ran.
+
+### Performance Reporting & Signal Attribution
+
+Every position stores `entry_signals` (JSONB) — the indicator state at the moment of entry, using the same thresholds as the screener (imported from `screener.py`, not restated, so they can't drift).
+
+That snapshot is what makes `GET /reports/by-signal` possible: it splits closed trades by each signal and compares average R with the flag on versus off. The difference (`edge_r`) is the evidence base for keeping, dropping, or retuning a signal — and it's exactly the data milestone 16 (alert tuning) was blocked on.
+
+Metrics follow standard trade-journal definitions: win rate, profit factor, **expectancy** (`win_rate × avg_win − loss_rate × avg_loss`), average R, max drawdown (in R), consecutive win/loss streaks. Reports below 20 closed trades are flagged `sample_is_thin`.
+
 ### Earnings Calendar
 
 Fetched daily at 8 AM ET for watchlist tickers. Surfaces as an alert or dashboard notice when earnings are within 5 days. Useful for deciding whether to hold or exit before an event.
@@ -181,7 +247,10 @@ All pages are implemented and working (Milestones 1–8 complete):
 | **Scanner** | Indicator snapshot table — RSI color-coded, BB squeeze dot, MACD histogram; symbol name tooltips on hover; indicator header tooltips (description + interpretation); scheduler status bar (last/next scan, API credits, cooldown, pause notice); Run Scan Now button |
 | **Screener** | Read-only results display (auto-populated Saturday night); ranked table with signal dots, score badges, symbol name tooltips, indicator header tooltips, and Add to Watchlist button per row (optimistic, reverts on error); admin re-run button |
 | **Charts** | Candlestick + BB/EMA overlays; 1M/3M/6M/1Y/All zoom; candlestick/line toggle; TradingView deep link; company name subtitle; chart height 65vh (clamp 400–720px) |
-| **Alerts** | Alert cards with type badges; acknowledge + clear-all; unread count badge in nav |
+| **Alerts** | Alert cards with type badges; category tabs (All / Positions / Opportunities); acknowledge + clear-all; unread count badge in nav |
+| **Positions** | Open positions with live unrealized R and a stop→entry→target progress bar; closed history with P&L, R, hold time, exit reason; SIM/LIVE badges; close dialog with outcome preview |
+| **Reports** | Headline metrics (P&L, win rate, expectancy, avg R, profit factor, max drawdown); cumulative-R equity curve; **signal attribution table**; exit-reason breakdown; SIM / Real / Combined toggle |
+| **Settings** | Position sizing defaults (account size, risk %, concentration limit) and exit-plan defaults (stop/target method, ATR multiplier, target R, trailing stop, time stop) |
 
 ---
 
@@ -581,7 +650,39 @@ Document the app for a user who didn't build it — covers setup, daily workflow
 
 ---
 
-### 13. ⬜ Integration testing
+### 13. 🔄 Position tracking, exit strategy & performance reporting
+
+Closes the loop between "here's a trade idea" and "here's how it turned out." Plan an exit before entering, record the position as an event stream, monitor it with alerts, and report on results segmented by the signals that triggered entry. Simulation mode accumulates outcome data before real money is at risk.
+
+**Subtasks**
+- [x] Slice 1 — Schema (`positions`, `position_events`, `app_settings`, `alerts.category`), exit strategy builder, positions + settings API
+- [x] Slice 2 — Position alerts (`position_monitor.py`), wired into the intraday poll and EOD scan
+- [x] Slice 3 — Positions page, exit strategy builder dialog, Settings page, alert category tabs, nav
+- [x] Slice 4 — Performance reporting: metrics, equity curve, signal attribution
+- [ ] Apply migration `002_positions.sql` in the Supabase SQL editor
+- [ ] Live verification: open a simulated position end-to-end, confirm a position alert fires
+
+**Testing criteria**
+- [x] Exit calculator: every stop/target method, sizing maths, R:R, warnings, hard errors
+- [x] Trailing stop ratchets up and never down
+- [x] Position alert dedup keys on `position_id`, not symbol
+- [x] Opportunity dedup is unaffected by position alerts (category filter)
+- [x] Intraday poll covers position symbols that aren't on the watchlist
+- [x] Report metrics: expectancy sign, profit factor with zero losses, drawdown, signal edge
+- [x] 206 backend tests / 98 frontend tests passing (117 / 78 before)
+
+**Technical notes**
+- Design follows established trade-journal practice (R-multiples, ATR stops, expectancy) rather than anything invented — see the Exit Strategy Builder section above
+- `initial_stop_price` is frozen at entry: it's the R denominator and must never move
+- The monitor raises alerts but **never auto-closes** — no broker connection means no knowable fill price
+- `entry_signals` (JSONB) is the linchpin: without it, "which signals make money?" is unanswerable after the fact. It unblocks milestone 16.
+- `is_simulated` defaults to **true** — real money is opt-in
+- Frontend: `ExitPlanDialog.jsx` recalculates against `POST /positions/plan` on every input change, so the levels shown are always the ones the server would use
+- New files: `services/exit_strategy.py`, `services/position_monitor.py`, `services/positions.py`, `services/reports.py`, `services/settings.py`; routers `positions.py`, `settings.py`, `reports.py`; pages `PositionsPage`, `ReportsPage`, `SettingsPage`; `components/ExitPlanDialog.jsx`; `lib/exitMethods.js`, `lib/nav.js`
+
+---
+
+### 14. ⬜ Integration testing
 
 Test the full backend stack against a real (test) Supabase database — exercises routes, services, and DB together without mocks.
 
@@ -597,7 +698,7 @@ Test the full backend stack against a real (test) Supabase database — exercise
 
 ---
 
-### 14. ⬜ End-to-end testing
+### 15. ⬜ End-to-end testing
 
 Drive the full app in a real browser against a deployed (or local) backend. Validates the complete user experience.
 
@@ -613,7 +714,7 @@ Drive the full app in a real browser against a deployed (or local) backend. Vali
 
 ---
 
-### 15. ⬜ LLM integrations + Claude skill
+### 16. ⬜ LLM integrations + Claude skill
 
 Two related features sharing the same Claude/API infrastructure.
 
@@ -640,23 +741,25 @@ Two related features sharing the same Claude/API infrastructure.
 
 ---
 
-### 16. ⬜ Alert condition tuning
+### 17. ⬜ Alert condition tuning
 
 Review and adjust alert thresholds based on real data observed after the app has been live for several weeks.
 
 **Subtasks**
 - [ ] Review alert history: which conditions fire most/least, any obvious false positives
-- [ ] Compare alert triggers against subsequent price action (use `trade_log` or manual review)
+- [ ] Use `GET /reports/by-signal` to compare each signal's average R with the flag on vs off
 - [ ] Adjust thresholds in `scanner.py` if needed (e.g. RSI oversold cutoff, vol expansion multiplier)
 - [ ] Consider enabling/disabling specific conditions based on observed usefulness
 
 **Technical notes**
-- Requires several weeks of live data — do this after the app has been deployed and running
-- This milestone is the manual precursor to the full custom alert rule engine (feature 16)
+- **Unblocked by milestone 13** — `positions.entry_signals` records the indicator state at entry, and `/reports/by-signal` turns that into a per-signal edge. This is the evidence base that was previously missing.
+- Still requires a real sample: reports flag `sample_is_thin` below 20 closed trades, and a signal "edge" drawn from three trades is not an edge
+- Simulated positions count for this purpose — that's what simulation mode is for
+- This milestone is the manual precursor to the full custom alert rule engine (see Future work)
 
 ---
 
-### 17. ⬜ Future work / next features
+### 18. ⬜ Future work / next features
 
 #### Universe / Ticker Browser
 A dedicated page for browsing and managing the `tickers` table. Key ideas:
@@ -680,9 +783,14 @@ User-defined alert conditions, replacing or extending the hardcoded 6-condition 
 - **News summarizer**: scan headlines for watchlist tickers and surface relevant events (earnings, macro, geopolitical) that could affect price — summarized by an LLM
 - **Trade setup advisor**: given current indicators + past trade performance, recommend entry/exit prices, stop loss levels, options/hedging strategies, and flag risks to watch as a trade unfolds
 
+#### Deferred from milestone 13
+- **Partial exits / scale-out**: close 50% at 1R and trail the rest. `position_events` already accepts a `partial_exit` type, so no migration is needed — what's missing is the weighted-average P&L maths and the UI
+- **Short positions**: `positions.direction` exists and the schema supports it, but the calculator and UI are long-only in v1
+- **Broker import**: everything is manual entry today
+
 #### Other Ideas (to evaluate)
-- **Trade journal + outcome logging**: record entry/exit per trade linked to the alert that triggered it; track P&L and outcome vs. alert prediction — foundational for tuning and backtesting (`trade_log` table schema already exists)
-- **Backtesting**: replay historical OHLCV + indicator snapshots through alert conditions to evaluate rule quality before going live
+- **Backtesting**: replay historical OHLCV + indicator snapshots through alert conditions to evaluate rule quality before going live. Now more valuable — `/reports/by-signal` gives a way to score the output
 - **Multi-timeframe confirmation**: check daily setup against weekly chart before alerting — reduces false positives on shorter-term noise
-- **Portfolio risk view**: position sizing suggestions, correlation between current watchlist holdings, total exposure by sector
+- **Portfolio risk view**: correlation between open positions, total exposure by sector, aggregate open risk in R across all positions
 - **Chart indicator toggles**: show/hide individual overlays (BB, EMA 8/21/50) from the chart UI; save preferences
+- **Stop/target overlays on the chart**: draw an open position's entry, stop, and target as horizontal lines on the Chart page

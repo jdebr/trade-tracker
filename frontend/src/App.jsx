@@ -10,6 +10,9 @@ import WatchlistPage from "@/pages/WatchlistPage"
 import ScannerPage   from "@/pages/ScannerPage"
 import ChartPage     from "@/pages/ChartPage"
 import AlertsPage    from "@/pages/AlertsPage"
+import PositionsPage from "@/pages/PositionsPage"
+import ReportsPage   from "@/pages/ReportsPage"
+import SettingsPage  from "@/pages/SettingsPage"
 
 function NotFoundPage() {
   return (
@@ -32,8 +35,11 @@ export default function App() {
             <Route path="/screener"  element={<ScreenerPage />}  />
             <Route path="/scanner"   element={<ScannerPage />}   />
             <Route path="/watchlist" element={<WatchlistPage />} />
+            <Route path="/positions" element={<PositionsPage />} />
             <Route path="/chart"     element={<ChartPage />}     />
             <Route path="/alerts"    element={<AlertsPage />}    />
+            <Route path="/reports"   element={<ReportsPage />}   />
+            <Route path="/settings"  element={<SettingsPage />}  />
             <Route path="*"          element={<NotFoundPage />}  />
           </Route>
         </Routes>

@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, CheckCircle } from "lucide-react"
+import { Plus, CheckCircle, Target } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip } from "@/components/ui/Tooltip"
+import ExitPlanDialog from "@/components/ExitPlanDialog"
 import { INDICATORS } from "@/lib/indicators"
 import { cn } from "@/lib/utils"
 
@@ -116,7 +117,21 @@ function AddWatchlistButton({ symbol, watchlistSet, onAdd, isPending }) {
   )
 }
 
-function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSymbol }) {
+function PlanTradeButton({ row, onPlan }) {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-7 w-7 p-0"
+      aria-label={`Plan a trade for ${row.symbol}`}
+      onClick={() => onPlan(row)}
+    >
+      <Target size={14} aria-hidden="true" />
+    </Button>
+  )
+}
+
+function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSymbol, onPlan }) {
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-border mt-4">
       <table className="w-full text-sm">
@@ -131,7 +146,7 @@ function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
                 <th className="px-4 py-3 text-left font-medium cursor-help">{label}</th>
               </Tooltip>
             ))}
-            <th className="px-4 py-3 text-center font-medium w-12"></th>
+            <th className="px-4 py-3 text-center font-medium w-24"></th>
           </tr>
         </thead>
         <tbody>
@@ -155,13 +170,16 @@ function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
                   <SignalDot value={row[key]} label="" />
                 </td>
               ))}
-              <td className="px-4 py-3 text-center">
-                <AddWatchlistButton
-                  symbol={row.symbol}
-                  watchlistSet={watchlistSet}
-                  onAdd={onAddToWatchlist}
-                  isPending={addingSymbol === row.symbol}
-                />
+              <td className="px-4 py-3">
+                <div className="flex items-center justify-center gap-1.5">
+                  <PlanTradeButton row={row} onPlan={onPlan} />
+                  <AddWatchlistButton
+                    symbol={row.symbol}
+                    watchlistSet={watchlistSet}
+                    onAdd={onAddToWatchlist}
+                    isPending={addingSymbol === row.symbol}
+                  />
+                </div>
               </td>
             </tr>
           ))}
@@ -175,7 +193,7 @@ function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
 // Results card list (mobile)
 // ---------------------------------------------------------------------------
 
-function ResultsCards({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSymbol }) {
+function ResultsCards({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSymbol, onPlan }) {
   return (
     <div className="md:hidden space-y-3 mt-4">
       {rows.map((row) => (
@@ -197,6 +215,7 @@ function ResultsCards({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
                 </span>
               )}
               <ScoreBadge score={row.signal_score} />
+              <PlanTradeButton row={row} onPlan={onPlan} />
               <AddWatchlistButton
                 symbol={row.symbol}
                 watchlistSet={watchlistSet}
@@ -290,6 +309,11 @@ export default function ScreenerPage() {
   // ---- Add-to-watchlist state ----
   const [addingSymbol,   setAddingSymbol]   = useState(null)
   const [addWlError,     setAddWlError]     = useState(null)
+
+  // ---- Exit plan builder ----
+  // Holds the screener row the user chose to plan a trade from, so the position
+  // records which screener result surfaced the idea.
+  const [planningRow,    setPlanningRow]    = useState(null)
 
   // ---- Screener run state ----
   const [screenJobId,    setScreenJobId]    = useState(null)
@@ -557,6 +581,7 @@ export default function ScreenerPage() {
             watchlistSet={watchlistSet}
             onAddToWatchlist={addToWatchlist}
             addingSymbol={addingSymbol}
+            onPlan={setPlanningRow}
           />
           <ResultsCards
             rows={results}
@@ -564,6 +589,7 @@ export default function ScreenerPage() {
             watchlistSet={watchlistSet}
             onAddToWatchlist={addToWatchlist}
             addingSymbol={addingSymbol}
+            onPlan={setPlanningRow}
           />
           {screenMeta && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-3">
@@ -573,6 +599,18 @@ export default function ScreenerPage() {
             </div>
           )}
         </>
+      )}
+
+      {planningRow && (
+        <ExitPlanDialog
+          open={!!planningRow}
+          onOpenChange={(o) => !o && setPlanningRow(null)}
+          symbol={planningRow.symbol}
+          suggestedEntry={
+            planningRow.close_price != null ? Number(planningRow.close_price) : null
+          }
+          screenerResultId={planningRow.id}
+        />
       )}
 
       <AdminPanel

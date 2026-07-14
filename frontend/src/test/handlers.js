@@ -37,26 +37,171 @@ export const MOCK_RUN_RESPONSE = {
 export const MOCK_ALERTS = [
   {
     id: "alert-1", symbol: "AAPL", date: "2026-03-28",
-    alert_type: "bb_squeeze", signal_score: 4,
+    alert_type: "bb_squeeze", category: "opportunity", position_id: null, signal_score: 4,
     price_at_trigger: 213.49, acknowledged: false,
     triggered_at: "2026-03-28T20:00:00Z",
     details: { bb_squeeze: true, rsi_in_range: true, above_ema50: true, vol_expansion: true },
   },
   {
     id: "alert-2", symbol: "MSFT", date: "2026-03-28",
-    alert_type: "rsi_oversold", signal_score: 2,
+    alert_type: "rsi_oversold", category: "opportunity", position_id: null, signal_score: 2,
     price_at_trigger: 388.20, acknowledged: false,
     triggered_at: "2026-03-28T20:01:00Z",
     details: { rsi_14: 28.4, bb_squeeze: false },
   },
   {
     id: "alert-3", symbol: "NVDA", date: "2026-03-27",
-    alert_type: "macd_crossover", signal_score: null,
+    alert_type: "macd_crossover", category: "opportunity", position_id: null, signal_score: null,
     price_at_trigger: 118.75, acknowledged: false,
     triggered_at: "2026-03-27T20:00:00Z",
     details: { macd_hist: 0.32 },
   },
+  // A position alert — a trade being held hit its target. Distinct category from
+  // the three opportunity alerts above.
+  {
+    id: "alert-4", symbol: "TSLA", date: "2026-03-28",
+    alert_type: "target_hit", category: "position", position_id: "pos-3", signal_score: null,
+    price_at_trigger: 230.00, acknowledged: false,
+    triggered_at: "2026-03-28T20:02:00Z",
+    details: { target_price: 228.0, entry_price: 213.49, is_simulated: true, unrealized_r: 2.1 },
+  },
 ]
+
+// ---------------------------------------------------------------------------
+// Positions / settings / reports
+// ---------------------------------------------------------------------------
+
+export const MOCK_SETTINGS = {
+  account_size: 10000,
+  risk_per_trade_pct: 1.0,
+  max_position_pct: 25.0,
+  default_stop_method: "atr_multiple",
+  default_atr_mult: 2.0,
+  default_stop_pct: 8.0,
+  default_target_method: "r_multiple",
+  default_target_r: 2.0,
+  default_target_pct: 16.0,
+  trail_enabled: false,
+  trail_atr_mult: 3.0,
+  time_stop_days: 10,
+  updated_at: "2026-03-28T20:00:00Z",
+}
+
+// entry 100, stop 94 → risk 6/share, 16 shares, 2R target at 112
+export const MOCK_EXIT_PLAN = {
+  symbol: "AAPL",
+  direction: "long",
+  entry_price: 100.0,
+  stop_method: "atr_multiple",
+  stop_price: 94.0,
+  target_method: "r_multiple",
+  target_price: 112.0,
+  risk_per_share: 6.0,
+  reward_per_share: 12.0,
+  rr_ratio: 2.0,
+  shares: 16,
+  risk_amount: 96.0,
+  position_value: 1600.0,
+  position_pct_of_account: 16.0,
+  time_stop_date: "2026-04-11",
+  trail_enabled: false,
+  trail_atr_mult: 3.0,
+  stop_candidates: {
+    atr_multiple: 94.0, percent: 92.0, bb_lower: 94.5,
+    ema_21: 96.0, ema_50: 92.0, swing_low: 90.0, manual: null,
+  },
+  target_candidates: {
+    r_multiple: 112.0, atr_multiple: 112.0, percent: 116.0,
+    bb_upper: 108.0, manual: null,
+  },
+  warnings: [],
+  params: { stop_method: "atr_multiple", atr_mult: 2.0, target_r: 2.0 },
+}
+
+export const MOCK_POSITIONS = [
+  {
+    id: "pos-1", symbol: "AAPL", direction: "long",
+    is_simulated: true, status: "open",
+    alert_id: null, screener_result_id: null,
+    entry_date: "2026-03-20", entry_price: 100.0, shares: 16.0, position_value: 1600.0,
+    initial_stop_price: 94.0, stop_price: 94.0, target_price: 112.0,
+    stop_method: "atr_multiple", target_method: "r_multiple",
+    exit_plan: {}, time_stop_date: null,
+    risk_per_share: 6.0, risk_amount: 96.0,
+    entry_signals: { bb_squeeze: true, signal_score: 3 },
+    exit_date: null, exit_price: null, exit_reason: null,
+    pnl: null, pnl_pct: null, r_multiple: null, hold_days: null,
+    notes: null,
+    created_at: "2026-03-20T14:00:00Z", updated_at: "2026-03-20T14:00:00Z",
+  },
+  {
+    id: "pos-2", symbol: "MSFT", direction: "long",
+    is_simulated: false, status: "closed",
+    alert_id: null, screener_result_id: null,
+    entry_date: "2026-03-01", entry_price: 400.0, shares: 5.0, position_value: 2000.0,
+    initial_stop_price: 380.0, stop_price: 380.0, target_price: 440.0,
+    stop_method: "atr_multiple", target_method: "r_multiple",
+    exit_plan: {}, time_stop_date: null,
+    risk_per_share: 20.0, risk_amount: 100.0,
+    entry_signals: { bb_squeeze: false, signal_score: 2 },
+    exit_date: "2026-03-10", exit_price: 440.0, exit_reason: "target_hit",
+    pnl: 200.0, pnl_pct: 10.0, r_multiple: 2.0, hold_days: 9,
+    notes: null,
+    created_at: "2026-03-01T14:00:00Z", updated_at: "2026-03-10T14:00:00Z",
+  },
+]
+
+export const MOCK_POSITION_QUOTES = { AAPL: 106.0 }
+
+export const MOCK_PERFORMANCE = {
+  filters: { is_simulated: true, date_from: null, date_to: null },
+  performance: {
+    total_trades: 5, wins: 3, losses: 2, breakeven: 0,
+    win_rate: 60.0, total_pnl: 400.0, avg_win: 200.0, avg_loss: 100.0,
+    profit_factor: 3.0, expectancy: 80.0,
+    total_r: 4.0, avg_r: 0.8,
+    largest_win: 300.0, largest_loss: -100.0,
+    avg_hold_days: 5.0,
+    max_consecutive_wins: 2, max_consecutive_losses: 1,
+    max_drawdown_r: 1.0,
+    sample_is_thin: true,
+  },
+  by_exit_reason: [
+    { exit_reason: "target_hit", trades: 3, win_rate: 100.0, avg_r: 2.0, total_r: 6.0, total_pnl: 600.0 },
+    { exit_reason: "stop_hit",   trades: 2, win_rate: 0.0,   avg_r: -1.0, total_r: -2.0, total_pnl: -200.0 },
+  ],
+  by_signal_score: [
+    { signal_score: 3, trades: 3, win_rate: 66.7, avg_r: 1.2, total_r: 3.6 },
+  ],
+}
+
+export const MOCK_BY_SIGNAL = {
+  total_closed_trades: 5,
+  signals: [
+    {
+      signal: "bb_squeeze",
+      with_signal:    { trades: 3, win_rate: 100.0, avg_r: 2.0, total_r: 6.0, expectancy: 200.0 },
+      without_signal: { trades: 2, win_rate: 0.0,   avg_r: -1.0, total_r: -2.0, expectancy: -100.0 },
+      edge_r: 3.0,
+      sample_is_thin: true,
+    },
+    {
+      signal: "volume_expansion",
+      with_signal:    { trades: 2, win_rate: 0.0,  avg_r: -1.0, total_r: -2.0, expectancy: -100.0 },
+      without_signal: { trades: 3, win_rate: 100.0, avg_r: 2.0, total_r: 6.0, expectancy: 200.0 },
+      edge_r: -3.0,
+      sample_is_thin: true,
+    },
+  ],
+}
+
+export const MOCK_EQUITY_CURVE = {
+  curve: [
+    { exit_date: "2026-03-01", symbol: "A", r_multiple: 2.0, pnl: 200, cumulative_r: 2.0, cumulative_pnl: 200 },
+    { exit_date: "2026-03-05", symbol: "B", r_multiple: -1.0, pnl: -100, cumulative_r: 1.0, cumulative_pnl: 100 },
+    { exit_date: "2026-03-10", symbol: "C", r_multiple: 3.0, pnl: 300, cumulative_r: 4.0, cumulative_pnl: 400 },
+  ],
+}
 
 // Generate 30 synthetic OHLCV bars ending today
 function makeBars(n = 30) {
@@ -229,5 +374,52 @@ export const handlers = [
 
   http.delete(`${API_URL}/watchlist/:symbol`, () =>
     new HttpResponse(null, { status: 204 })
+  ),
+
+  // ---- Positions ----------------------------------------------------------
+
+  http.get(`${API_URL}/positions/quotes`, () =>
+    HttpResponse.json(MOCK_POSITION_QUOTES)
+  ),
+
+  http.get(`${API_URL}/positions`, () =>
+    HttpResponse.json(MOCK_POSITIONS)
+  ),
+
+  http.post(`${API_URL}/positions/plan`, () =>
+    HttpResponse.json(MOCK_EXIT_PLAN)
+  ),
+
+  http.post(`${API_URL}/positions`, () =>
+    HttpResponse.json(MOCK_POSITIONS[0], { status: 201 })
+  ),
+
+  http.post(`${API_URL}/positions/:id/close`, () =>
+    HttpResponse.json({ ...MOCK_POSITIONS[0], status: "closed" })
+  ),
+
+  // ---- Settings -----------------------------------------------------------
+
+  http.get(`${API_URL}/settings`, () =>
+    HttpResponse.json(MOCK_SETTINGS)
+  ),
+
+  http.patch(`${API_URL}/settings`, async ({ request }) => {
+    const body = await request.json()
+    return HttpResponse.json({ ...MOCK_SETTINGS, ...body })
+  }),
+
+  // ---- Reports ------------------------------------------------------------
+
+  http.get(`${API_URL}/reports/performance`, () =>
+    HttpResponse.json(MOCK_PERFORMANCE)
+  ),
+
+  http.get(`${API_URL}/reports/by-signal`, () =>
+    HttpResponse.json(MOCK_BY_SIGNAL)
+  ),
+
+  http.get(`${API_URL}/reports/equity-curve`, () =>
+    HttpResponse.json(MOCK_EQUITY_CURVE)
   ),
 ]

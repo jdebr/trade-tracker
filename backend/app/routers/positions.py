@@ -21,6 +21,7 @@ from app.services.exit_strategy import (
     build_exit_plan,
     load_market_context,
 )
+from app.services.ohlcv_cache import get_cached_bars
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/positions", tags=["positions"])
@@ -80,6 +81,29 @@ def plan_exit(body: ExitPlanRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
     return plan.to_dict()
+
+
+@router.get("/quotes")
+def get_position_quotes() -> dict[str, float]:
+    """
+    Latest cached close for every symbol with an open position.
+
+    The Positions page needs a current price to show unrealized R, and
+    indicator_snapshots has no close column — so it comes from ohlcv_cache here in
+    one round trip rather than a fetch per position.
+
+    Declared before /{position_id} so "quotes" is not read as a position id.
+    """
+    symbols = pos_svc.get_open_position_symbols()
+    if not symbols:
+        return {}
+
+    quotes: dict[str, float] = {}
+    for symbol in symbols:
+        bars = get_cached_bars(symbol, limit=1)
+        if bars:
+            quotes[symbol] = float(bars[-1]["close"])
+    return quotes
 
 
 # ---------------------------------------------------------------------------

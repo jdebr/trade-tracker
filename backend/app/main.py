@@ -6,7 +6,7 @@ from app.config import ALLOWED_ORIGINS
 from app.dependencies import get_current_user
 from app.routers import (
     health, watchlist, ohlcv, indicators, screener, alerts, scheduler,
-    tickers, status, positions, settings,
+    tickers, status, positions, settings, reports,
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
 
@@ -45,3 +45,4 @@ app.include_router(scheduler.router,   dependencies=[Depends(get_current_user)])
 app.include_router(tickers.router,     dependencies=[Depends(get_current_user)])
 app.include_router(positions.router,   dependencies=[Depends(get_current_user)])
 app.include_router(settings.router,    dependencies=[Depends(get_current_user)])
+app.include_router(reports.router,     dependencies=[Depends(get_current_user)])
