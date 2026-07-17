@@ -2,6 +2,11 @@
 
 A personal assistant for finding and monitoring swing trades. It does **not** execute trades — all buy/sell decisions and order placement happen in your brokerage separately.
 
+**🔗 App:** https://trade-tracker-blush.vercel.app
+**API:** https://trade-tracker-t1ee.onrender.com (backend — `/docs` for the interactive API reference)
+
+> First load after a quiet spell can take 30–60s while the backend wakes from sleep (Render starter tier). That's normal.
+
 ---
 
 ## Contents
