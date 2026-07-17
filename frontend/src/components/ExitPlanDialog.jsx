@@ -1,11 +1,13 @@
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query"
 import { X, AlertTriangle, FlaskConical, Wallet } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip } from "@/components/ui/Tooltip"
+import { RangeInput } from "@/components/ui/RangeInput"
+import { useDebounce } from "@/lib/useDebounce"
 import { STOP_METHODS, TARGET_METHODS, stopMethodTip, targetMethodTip } from "@/lib/exitMethods"
 import { cn } from "@/lib/utils"
 
@@ -35,6 +37,27 @@ function NumberInput({ value, onChange, step = "0.01", ...props }) {
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
       className={inputClass}
+      {...props}
+    />
+  )
+}
+
+// Grows to fit its content so long trade notes stay visible without scrolling.
+function AutoResizeTextarea({ value, onChange, minRows = 3, ...props }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${el.scrollHeight}px`
+  }, [value])
+  return (
+    <textarea
+      ref={ref}
+      rows={minRows}
+      value={value}
+      onChange={onChange}
+      className={cn(inputClass, "resize-none overflow-hidden leading-relaxed")}
       {...props}
     />
   )
@@ -227,6 +250,17 @@ export default function ExitPlanDialog({
     }
   }, [open, suggestedEntry])
 
+  // Slider range for entry price: ±25% around the suggested entry, kept stable so
+  // the thumb doesn't jump as the value is edited. Falls back to a sane window
+  // when no entry was suggested.
+  const entryRange = useMemo(() => {
+    const base = suggestedEntry && suggestedEntry > 0 ? suggestedEntry : 100
+    return {
+      min: Math.max(0.01, +(base * 0.75).toFixed(2)),
+      max: +(base * 1.25).toFixed(2),
+    }
+  }, [suggestedEntry])
+
   const planRequest = useMemo(() => ({
     symbol,
     entry_price: entryPrice,
@@ -239,16 +273,29 @@ export default function ExitPlanDialog({
     manual_target: manualTarget,
   }), [symbol, entryPrice, stopMethod, targetMethod, atrMult, targetR, riskPct, manualStop, manualTarget])
 
-  const planReady =
-    open && !!symbol && entryPrice > 0 && !!stopMethod && !!targetMethod &&
-    (stopMethod !== "manual" || manualStop > 0) &&
-    (targetMethod !== "manual" || manualTarget > 0)
+  // Debounce the request so dragging a slider or typing a price doesn't fire a
+  // plan call on every intermediate value — only ~300ms after the last change.
+  const debouncedRequest = useDebounce(planRequest, 300)
 
-  const { data: plan, isLoading: planLoading, error: planError } = useQuery({
-    queryKey: ["exit-plan", planRequest],
-    queryFn: () => api.post("/positions/plan", planRequest),
+  const planReady =
+    open && !!symbol && debouncedRequest.entry_price > 0 &&
+    !!debouncedRequest.stop_method && !!debouncedRequest.target_method &&
+    (debouncedRequest.stop_method !== "manual" || debouncedRequest.manual_stop > 0) &&
+    (debouncedRequest.target_method !== "manual" || debouncedRequest.manual_target > 0)
+
+  const {
+    data: plan,
+    isLoading: planLoading,   // true only on the FIRST fetch (no prior data)
+    isFetching: planFetching, // true on every refetch, including background ones
+    error: planError,
+  } = useQuery({
+    queryKey: ["exit-plan", debouncedRequest],
+    queryFn: () => api.post("/positions/plan", debouncedRequest),
     enabled: planReady,
     retry: false,
+    // Keep the last plan on screen while recomputing, so switching a stop/target
+    // method updates the numbers in place instead of flashing a loading state.
+    placeholderData: keepPreviousData,
   })
 
   const { mutate: openPosition, isPending: isOpening } = useMutation({
@@ -329,15 +376,26 @@ export default function ExitPlanDialog({
 
           <div className="grid md:grid-cols-2 gap-5">
             {/* ---------------- Inputs ---------------- */}
-            <div className="space-y-3">
-              <Field label="Entry price">
-                <NumberInput
+            <div className="space-y-3.5">
+              {/* A slider only makes sense with a price to centre it on (from the
+                  Screener). Planned from the Watchlist there's no suggested entry,
+                  so fall back to a plain field the user types into. */}
+              {suggestedEntry ? (
+                <RangeInput
+                  label="Entry price"
                   value={entryPrice}
                   onChange={setEntryPrice}
-                  aria-label="Entry price"
-                  autoFocus
+                  min={entryRange.min}
+                  max={entryRange.max}
+                  step={0.01}
+                  prefix="$"
+                  ariaLabel="Entry price"
                 />
-              </Field>
+              ) : (
+                <Field label="Entry price" hint="The price you plan to enter at.">
+                  <NumberInput value={entryPrice} onChange={setEntryPrice} aria-label="Entry price" autoFocus />
+                </Field>
+              )}
 
               <Field label="Stop method">
                 <Select
@@ -349,9 +407,15 @@ export default function ExitPlanDialog({
               </Field>
 
               {stopMethod === "atr_multiple" && (
-                <Field label="ATR multiplier" hint="2–3× is the usual swing range.">
-                  <NumberInput value={atrMult} onChange={setAtrMult} step="0.1" aria-label="ATR multiplier" />
-                </Field>
+                <RangeInput
+                  label="ATR multiplier"
+                  hint="2–3× is the usual swing range."
+                  value={atrMult}
+                  onChange={setAtrMult}
+                  min={1} max={5} step={0.1}
+                  suffix="×"
+                  ariaLabel="ATR multiplier"
+                />
               )}
               {stopMethod === "manual" && (
                 <Field label="Stop price">
@@ -369,9 +433,15 @@ export default function ExitPlanDialog({
               </Field>
 
               {targetMethod === "r_multiple" && (
-                <Field label="Target R" hint="2R makes twice what the trade risks.">
-                  <NumberInput value={targetR} onChange={setTargetR} step="0.5" aria-label="Target R" />
-                </Field>
+                <RangeInput
+                  label="Target R"
+                  hint="2R makes twice what the trade risks."
+                  value={targetR}
+                  onChange={setTargetR}
+                  min={0.5} max={5} step={0.5}
+                  suffix="R"
+                  ariaLabel="Target R"
+                />
               )}
               {targetMethod === "manual" && (
                 <Field label="Target price">
@@ -379,27 +449,33 @@ export default function ExitPlanDialog({
                 </Field>
               )}
 
-              <Field
+              <RangeInput
                 label="Risk per trade (%)"
                 hint={settings ? `Account: $${Number(settings.account_size).toLocaleString()}` : null}
-              >
-                <NumberInput value={riskPct} onChange={setRiskPct} step="0.25" aria-label="Risk per trade percent" />
-              </Field>
+                value={riskPct}
+                onChange={setRiskPct}
+                min={0.25} max={5} step={0.25}
+                suffix="%"
+                ariaLabel="Risk per trade percent"
+              />
 
               <Field label="Notes">
-                <textarea
+                <AutoResizeTextarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Why this trade?"
+                  minRows={3}
+                  placeholder="Why this trade? What's the thesis?"
                   aria-label="Notes"
-                  className={cn(inputClass, "resize-none")}
                 />
               </Field>
             </div>
 
-            {/* ---------------- Result ---------------- */}
-            <div className="space-y-3">
+            {/* ---------------- Result ----------------
+                While recomputing (method switch, slider drag) the previous plan
+                stays on screen via keepPreviousData and just dims slightly — the
+                numbers update in place. The "Calculating…" state shows only on the
+                very first calc, when there's nothing yet to keep. */}
+            <div className={cn("space-y-3 transition-opacity", planFetching && !planLoading && "opacity-60")}>
               {!planReady && (
                 <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
                   Enter a price to see the plan.
@@ -418,7 +494,7 @@ export default function ExitPlanDialog({
                 </div>
               )}
 
-              {plan && !planLoading && (
+              {plan && !planLoading && !planErrorMessage && (
                 <>
                   <PlanSummary plan={plan} />
 

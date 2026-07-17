@@ -19,6 +19,15 @@ ALLOWED_ORIGINS: list[str] = [
     if o.strip()
 ]
 
+# Outside production, always allow the local Vite dev origins even when
+# ALLOWED_ORIGINS is set to the production URL only. Without this, a repo .env
+# carrying the deployed origin leaves local dev with no CORS header, and the
+# browser reports every response (including 4xx) as a CORS failure.
+if ENVIRONMENT != "production":
+    for _dev_origin in ("http://localhost:5173", "http://127.0.0.1:5173"):
+        if _dev_origin not in ALLOWED_ORIGINS:
+            ALLOWED_ORIGINS.append(_dev_origin)
+
 # Scheduler
 SCHEDULER_ENABLED: bool = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"
 SCHEDULER_HOUR: int = int(os.getenv("SCHEDULER_HOUR", "16"))

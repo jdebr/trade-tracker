@@ -132,8 +132,8 @@ it("auto-selects the first watchlist symbol on load", async () => {
   expect(screen.getByRole("button", { name: "MSFT" })).toHaveAttribute("aria-pressed", "false")
 })
 
-// 10. No-bars error references "Run Scan Now"
-it("error message references Run Scan Now when no bars exist", async () => {
+// 10. No-bars error references "Update Now"
+it("error message references Update Now when no bars exist", async () => {
   server.use(
     http.get("http://localhost:8000/ohlcv/bars", () =>
       HttpResponse.json({ detail: "No cached bars" }, { status: 404 })
@@ -142,5 +142,5 @@ it("error message references Run Scan Now when no bars exist", async () => {
   renderPage()
   await waitFor(() => screen.getByRole("button", { name: "AAPL" }))
   await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument())
-  expect(screen.getByRole("alert").textContent).toMatch(/run scan now/i)
+  expect(screen.getByRole("alert").textContent).toMatch(/update now/i)
 })

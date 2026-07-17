@@ -75,12 +75,14 @@ Migrations: `supabase/migrations/` — apply by hand in the Supabase SQL editor.
 
 ## Architecture
 
-### Screener vs. Scanner
+### Screener vs. watchlist update
+
+Three backend modes. Note the naming: the daily watchlist scan is a backend job (`scanner.py` / `run_watchlist_scan`, unchanged), but in the UI it's surfaced on the **Watchlist** page and its manual trigger is labelled **Update Now**. There is no longer a separate "Scanner" page.
 
 | Mode | Purpose | Trigger | Scope |
 |---|---|---|---|
 | **Screener** | Find new candidates from the full S&P 500 universe | Automated Saturday night; manual admin button available | ~505 tickers, two-pass filter |
-| **Scanner** | Monitor active watchlist tickers for EOD alert conditions | Scheduled 4:15 PM ET daily (also manual via "Run Scan Now") | Watchlist (10–20 tickers) |
+| **Watchlist update** (EOD scan) | Monitor active watchlist tickers for EOD alert conditions | Scheduled 4:15 PM ET daily (also manual via "Update Now") | Watchlist (10–20 tickers) |
 | **Intraday poller** | Track watchlist price movement vs. stored indicator levels | Every 1.5 hours during market hours (9:30–3:30 ET) | Watchlist (10–20 tickers) |
 
 ### Scheduled Jobs
@@ -189,7 +191,7 @@ Guard rails: a stop at or above entry is a **hard error** (there's no risk to di
 
 ### Simulation
 
-`positions.is_simulated` defaults to **true** — real money is opt-in, never the default. Simulated and real results are never blended into one aggregate unless explicitly requested, and the Reports page warns when you do: a paper trade you'd never actually have taken, averaged with real fills, describes a strategy nobody ran.
+`positions.is_simulated` defaults to **true** — real money is opt-in, never the default. The Reports page keeps simulated and real results strictly separate (a Simulated / Real toggle, no blended view): a paper trade you'd never actually have taken, averaged with real fills, describes a strategy nobody ran. The API still accepts an omitted `is_simulated` to combine both for programmatic/MCP use, but the UI does not expose it.
 
 ### Performance Reporting & Signal Attribution
 
@@ -243,13 +245,12 @@ All pages are implemented and working (Milestones 1–8 complete):
 
 | Page | Description |
 |---|---|
-| **Watchlist** | Add/remove tickers; group assignment via fuzzy-match combobox (creates new groups inline); group filter pills; delete confirmation dialog; optimistic remove with rollback on error |
-| **Scanner** | Indicator snapshot table — RSI color-coded, BB squeeze dot, MACD histogram; symbol name tooltips on hover; indicator header tooltips (description + interpretation); scheduler status bar (last/next scan, API credits, cooldown, pause notice); Run Scan Now button |
-| **Screener** | Read-only results display (auto-populated Saturday night); ranked table with signal dots, score badges, symbol name tooltips, indicator header tooltips, and Add to Watchlist button per row (optimistic, reverts on error); admin re-run button |
+| **Watchlist** | Combined management + readings (merged the former Scanner page). Per-row indicator table (RSI color-coded, BB squeeze dot, MACD, EMA 50, ATR) with add/remove, group assignment via fuzzy-match combobox, group filter pills, delete confirmation, optimistic remove with rollback; "Open" badge on held tickers; per-row **Plan a trade** (target icon) → exit builder; update status bar (last/next update, API credits, cooldown, pause) with **Update Now** button |
+| **Screener** | Read-only results display (auto-populated Saturday night); ranked table with signal dots, score badges, symbol name tooltips, indicator header tooltips, Add to Watchlist and **Plan a trade** buttons per row, "Open" badge on held tickers; admin re-run button |
 | **Charts** | Candlestick + BB/EMA overlays; 1M/3M/6M/1Y/All zoom; candlestick/line toggle; TradingView deep link; company name subtitle; chart height 65vh (clamp 400–720px) |
 | **Alerts** | Alert cards with type badges; category tabs (All / Positions / Opportunities); acknowledge + clear-all; unread count badge in nav |
 | **Positions** | Open positions with live unrealized R and a stop→entry→target progress bar; closed history with P&L, R, hold time, exit reason; SIM/LIVE badges; close dialog with outcome preview |
-| **Reports** | Headline metrics (P&L, win rate, expectancy, avg R, profit factor, max drawdown); cumulative-R equity curve; **signal attribution table**; exit-reason breakdown; SIM / Real / Combined toggle |
+| **Reports** | Headline metrics (P&L, win rate, expectancy, avg R, profit factor, max drawdown); cumulative-R equity curve; **signal attribution table**; exit-reason breakdown; Simulated / Real toggle (kept strictly separate) |
 | **Settings** | Position sizing defaults (account size, risk %, concentration limit) and exit-plan defaults (stop/target method, ATR multiplier, target R, trailing stop, time stop) |
 
 ---

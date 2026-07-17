@@ -17,7 +17,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import Layout from "../components/layout/Layout"
 import ScreenerPage  from "../pages/ScreenerPage"
 import WatchlistPage from "../pages/WatchlistPage"
-import ScannerPage   from "../pages/ScannerPage"
 import ChartPage     from "../pages/ChartPage"
 import AlertsPage    from "../pages/AlertsPage"
 
@@ -29,7 +28,6 @@ function renderAt(path) {
         <Routes>
           <Route element={<Layout />}>
             <Route path="/screener"  element={<ScreenerPage />}  />
-            <Route path="/scanner"   element={<ScannerPage />}   />
             <Route path="/watchlist" element={<WatchlistPage />} />
             <Route path="/chart"     element={<ChartPage />}     />
             <Route path="/alerts"    element={<AlertsPage />}    />
@@ -62,11 +60,10 @@ it("BottomNav has accessible nav landmark", () => {
   ).toBeInTheDocument()
 })
 
-// 4. All 5 routes render correct headings
+// 4. Routes render correct headings
 describe("page routes render correct headings", () => {
   const cases = [
     ["/screener",  /screener/i ],
-    ["/scanner",   /scanner/i  ],
     ["/watchlist", /watchlist/i],
     ["/chart",     /chart/i    ],
     ["/alerts",    /alerts/i   ],

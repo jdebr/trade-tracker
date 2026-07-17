@@ -74,6 +74,28 @@ describe("PositionsPage", () => {
     expect(screen.getByText("Target hit")).toBeInTheDocument()
   })
 
+  it("prefills the exit price with the last known price", async () => {
+    renderWithProviders(<PositionsPage />)
+    // Wait for the quote-driven unrealized R, which proves /positions/quotes loaded.
+    await waitFor(() => expect(screen.getByText("+1.00R")).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    // AAPL's last known price (MOCK_POSITION_QUOTES) is 106.
+    await waitFor(() => expect(screen.getByLabelText("Exit price")).toHaveValue(106))
+  })
+
+  it("closed-history columns are sortable", async () => {
+    renderWithProviders(<PositionsPage />)
+    await waitFor(() => expect(screen.getByText("Closed (1)")).toBeInTheDocument())
+
+    const pnlHeader = screen.getByRole("columnheader", { name: /p&l/i })
+    expect(pnlHeader).toHaveAttribute("aria-sort", "none")
+    fireEvent.click(within(pnlHeader).getByRole("button"))
+    expect(pnlHeader).toHaveAttribute("aria-sort", "ascending")
+    fireEvent.click(within(pnlHeader).getByRole("button"))
+    expect(pnlHeader).toHaveAttribute("aria-sort", "descending")
+  })
+
   it("previews the outcome before closing a position", async () => {
     renderWithProviders(<PositionsPage />)
 
@@ -255,15 +277,12 @@ describe("ReportsPage", () => {
     )
   })
 
-  it("warns that combined results don't describe a real strategy", async () => {
+  it("offers only Simulated and Real result sets (no blended view)", async () => {
     renderWithProviders(<ReportsPage />)
 
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Combined" })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole("tab", { name: "Combined" }))
-
-    await waitFor(() =>
-      expect(screen.getByText(/doesn't describe a strategy you actually ran/i)).toBeInTheDocument()
-    )
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Simulated" })).toBeInTheDocument())
+    expect(screen.getByRole("tab", { name: "Real" })).toBeInTheDocument()
+    expect(screen.queryByRole("tab", { name: "Combined" })).not.toBeInTheDocument()
   })
 
   it("shows an empty state when nothing has been closed", async () => {

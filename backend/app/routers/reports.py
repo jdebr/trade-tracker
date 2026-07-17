@@ -10,25 +10,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+_IS_SIMULATED_DESC = (
+    "true = paper trades only, false = real money only, omit for both combined. "
+    "The UI always sends true or false — simulated and real are never blended there."
+)
+
+
 @router.get("/performance")
 def get_performance(
-    is_simulated: Optional[bool] = Query(
-        True,
-        description=(
-            "true = paper trades only (default), false = real money only, "
-            "omit with ?is_simulated= to combine both."
-        ),
-    ),
+    is_simulated: Optional[bool] = Query(None, description=_IS_SIMULATED_DESC),
     date_from: Optional[date] = Query(None),
     date_to:   Optional[date] = Query(None),
 ):
     """
     Overall performance across closed positions.
 
-    Defaults to SIMULATED trades. Paper and real results are kept apart unless you
-    explicitly ask to combine them: blending a paper trade you'd never actually
-    have taken with real fills produces a track record that describes no strategy
-    anyone ever ran.
+    The UI keeps paper and real results strictly separate — it always passes an
+    explicit is_simulated. Omitting the param (programmatic/MCP callers) combines
+    both; that blended view is deliberately not exposed in the dashboard, because a
+    paper trade you'd never have taken averaged with real fills describes no
+    strategy anyone ran.
     """
     positions = reports_svc.get_closed_positions(is_simulated, date_from, date_to)
 
@@ -46,7 +47,7 @@ def get_performance(
 
 @router.get("/by-signal")
 def get_performance_by_signal(
-    is_simulated: Optional[bool] = Query(True),
+    is_simulated: Optional[bool] = Query(None, description=_IS_SIMULATED_DESC),
     date_from: Optional[date] = Query(None),
     date_to:   Optional[date] = Query(None),
 ):
@@ -66,7 +67,7 @@ def get_performance_by_signal(
 
 @router.get("/equity-curve")
 def get_equity_curve(
-    is_simulated: Optional[bool] = Query(True),
+    is_simulated: Optional[bool] = Query(None, description=_IS_SIMULATED_DESC),
     date_from: Optional[date] = Query(None),
     date_to:   Optional[date] = Query(None),
 ):

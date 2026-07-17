@@ -1,12 +1,23 @@
 from fastapi import APIRouter, HTTPException, Query
 from app.models.ohlcv import OHLCVBar, OHLCVFetchRequest, OHLCVFetchResponse
-from app.services.ohlcv_cache import bulk_check_freshness, upsert_bars, get_cached_bars
+from app.services.ohlcv_cache import (
+    bulk_check_freshness, upsert_bars, get_cached_bars, get_latest_closes,
+)
 from app.services.market_data import fetch_ohlcv
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ohlcv", tags=["ohlcv"])
+
+
+@router.get("/quotes")
+def get_quotes(
+    symbols: str = Query(..., description="Comma-separated ticker symbols"),
+) -> dict[str, float]:
+    """Latest cached close per symbol, e.g. {\"AAPL\": 213.49}. Missing symbols omitted."""
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return get_latest_closes(syms)
 
 
 @router.get("/bars", response_model=list[OHLCVBar])

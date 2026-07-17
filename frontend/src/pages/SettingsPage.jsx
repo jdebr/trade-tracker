@@ -4,6 +4,7 @@ import { Check } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { RangeInput } from "@/components/ui/RangeInput"
 import { STOP_METHODS, TARGET_METHODS } from "@/lib/exitMethods"
 import { cn } from "@/lib/utils"
 
@@ -63,8 +64,6 @@ export default function SettingsPage() {
   })
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }))
-  const num = (key) => (e) =>
-    setForm((f) => ({ ...f, [key]: e.target.value === "" ? "" : Number(e.target.value) }))
 
   function handleSave() {
     const { updated_at, ...updates } = form
@@ -99,24 +98,27 @@ export default function SettingsPage() {
           title="Position sizing"
           description="How much of the account a single trade is allowed to risk."
         >
-          <Field label="Account size" hint="Used to compute share counts.">
-            <input type="number" step="100" value={form.account_size}
-              onChange={num("account_size")} aria-label="Account size" className={inputClass} />
-          </Field>
-          <Field
-            label="Risk per trade (%)"
+          <RangeInput
+            label="Account size" prefix="$"
+            hint="Used to compute share counts."
+            value={form.account_size} onChange={set("account_size")}
+            min={1000} max={250000} step={500}
+            ariaLabel="Account size" numberClassName="w-28"
+          />
+          <RangeInput
+            label="Risk per trade (%)" suffix="%"
             hint="1% is the conventional default. This is the amount you lose if the stop is hit — one R."
-          >
-            <input type="number" step="0.25" value={form.risk_per_trade_pct}
-              onChange={num("risk_per_trade_pct")} aria-label="Risk per trade percent" className={inputClass} />
-          </Field>
-          <Field
-            label="Max position size (%)"
+            value={form.risk_per_trade_pct} onChange={set("risk_per_trade_pct")}
+            min={0.25} max={5} step={0.25}
+            ariaLabel="Risk per trade percent"
+          />
+          <RangeInput
+            label="Max position size (%)" suffix="%"
             hint="Warn when one trade would exceed this share of the account."
-          >
-            <input type="number" step="5" value={form.max_position_pct}
-              onChange={num("max_position_pct")} aria-label="Max position percent" className={inputClass} />
-          </Field>
+            value={form.max_position_pct} onChange={set("max_position_pct")}
+            min={5} max={100} step={5}
+            ariaLabel="Max position percent"
+          />
         </Section>
 
         <Section
@@ -131,14 +133,20 @@ export default function SettingsPage() {
               ))}
             </select>
           </Field>
-          <Field label="ATR multiplier" hint="2–3× is the usual swing range.">
-            <input type="number" step="0.1" value={form.default_atr_mult}
-              onChange={num("default_atr_mult")} aria-label="Default ATR multiplier" className={inputClass} />
-          </Field>
-          <Field label="Fixed stop (%)" hint="Used when the stop method is Fixed %.">
-            <input type="number" step="0.5" value={form.default_stop_pct}
-              onChange={num("default_stop_pct")} aria-label="Default stop percent" className={inputClass} />
-          </Field>
+          <RangeInput
+            label="ATR multiplier" suffix="×"
+            hint="2–3× is the usual swing range."
+            value={form.default_atr_mult} onChange={set("default_atr_mult")}
+            min={1} max={5} step={0.1}
+            ariaLabel="Default ATR multiplier"
+          />
+          <RangeInput
+            label="Fixed stop (%)" suffix="%"
+            hint="Used when the stop method is Fixed %."
+            value={form.default_stop_pct} onChange={set("default_stop_pct")}
+            min={1} max={25} step={0.5}
+            ariaLabel="Default stop percent"
+          />
         </Section>
 
         <Section
@@ -153,14 +161,20 @@ export default function SettingsPage() {
               ))}
             </select>
           </Field>
-          <Field label="Target R" hint="2R means the trade aims to make twice what it risks.">
-            <input type="number" step="0.5" value={form.default_target_r}
-              onChange={num("default_target_r")} aria-label="Default target R" className={inputClass} />
-          </Field>
-          <Field label="Fixed target (%)" hint="Used when the target method is Fixed %.">
-            <input type="number" step="1" value={form.default_target_pct}
-              onChange={num("default_target_pct")} aria-label="Default target percent" className={inputClass} />
-          </Field>
+          <RangeInput
+            label="Target R" suffix="R"
+            hint="2R means the trade aims to make twice what it risks."
+            value={form.default_target_r} onChange={set("default_target_r")}
+            min={0.5} max={5} step={0.5}
+            ariaLabel="Default target R"
+          />
+          <RangeInput
+            label="Fixed target (%)" suffix="%"
+            hint="Used when the target method is Fixed %."
+            value={form.default_target_pct} onChange={set("default_target_pct")}
+            min={2} max={50} step={1}
+            ariaLabel="Default target percent"
+          />
         </Section>
 
         <Section
@@ -178,19 +192,21 @@ export default function SettingsPage() {
               <span>{form.trail_enabled ? "Enabled" : "Disabled"}</span>
             </label>
           </Field>
-          <Field label="Trailing ATR multiplier" hint="Distance below the highest high since entry.">
-            <input type="number" step="0.5" value={form.trail_atr_mult}
-              onChange={num("trail_atr_mult")} aria-label="Trailing ATR multiplier"
-              disabled={!form.trail_enabled}
-              className={cn(inputClass, !form.trail_enabled && "opacity-50")} />
-          </Field>
-          <Field
-            label="Time stop (trading days)"
+          <RangeInput
+            label="Trailing ATR multiplier" suffix="×"
+            hint="Distance below the highest high since entry."
+            value={form.trail_atr_mult} onChange={set("trail_atr_mult")}
+            min={1} max={6} step={0.5}
+            disabled={!form.trail_enabled}
+            ariaLabel="Trailing ATR multiplier"
+          />
+          <RangeInput
+            label="Time stop (trading days)" suffix="days"
             hint="Alerts when a trade has gone this long without hitting a stop or target. 0 disables it."
-          >
-            <input type="number" step="1" value={form.time_stop_days}
-              onChange={num("time_stop_days")} aria-label="Time stop days" className={inputClass} />
-          </Field>
+            value={form.time_stop_days} onChange={set("time_stop_days")}
+            min={0} max={30} step={1}
+            ariaLabel="Time stop days" numberClassName="w-20"
+          />
         </Section>
       </div>
 

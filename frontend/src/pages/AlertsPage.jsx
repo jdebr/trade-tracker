@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils"
 // second kind usually wants action today.
 // ---------------------------------------------------------------------------
 const ALERT_TYPE_META = {
-  // Opportunity — EOD scanner
+  // Opportunity — EOD scan
   bb_squeeze:     { label: "BB Squeeze",      variant: "default"   },
   rsi_oversold:   { label: "RSI Oversold",    variant: "bull"      },
   rsi_overbought: { label: "RSI Overbought",  variant: "bear"      },

@@ -243,10 +243,11 @@ function ExitReasonTable({ rows }) {
 // Page
 // ---------------------------------------------------------------------------
 
+// Simulated and real are kept strictly separate — blending a paper trade you
+// might never have taken with real fills describes no strategy anyone ran.
 const MODES = [
-  { key: "sim",      label: "Simulated", param: "is_simulated=true"  },
-  { key: "live",     label: "Real",      param: "is_simulated=false" },
-  { key: "combined", label: "Combined",  param: "is_simulated="      },
+  { key: "sim",  label: "Simulated", param: "is_simulated=true"  },
+  { key: "live", label: "Real",      param: "is_simulated=false" },
 ]
 
 export default function ReportsPage() {
@@ -313,7 +314,7 @@ export default function ReportsPage() {
         <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-muted/30 py-16 gap-3">
           <TrendingUp size={32} className="text-muted-foreground/50" aria-hidden="true" />
           <p className="text-muted-foreground text-sm text-center max-w-sm">
-            No closed {mode === "live" ? "real" : mode === "sim" ? "simulated" : ""} trades yet.
+            No closed {mode === "live" ? "real" : "simulated"} trades yet.
             Close a position and its results will show up here.
           </p>
         </div>
@@ -326,13 +327,6 @@ export default function ReportsPage() {
               Only {perf.total_trades} closed trade{perf.total_trades !== 1 ? "s" : ""}. These
               numbers are indicative at best — a strategy's edge doesn't become
               measurable until you have a few dozen.
-            </div>
-          )}
-
-          {mode === "combined" && (
-            <div className="rounded-lg border border-border bg-muted/40 px-4 py-2.5 text-xs text-muted-foreground">
-              Showing paper and real trades together. Useful for sample size, but the
-              blended result doesn't describe a strategy you actually ran.
             </div>
           )}
 

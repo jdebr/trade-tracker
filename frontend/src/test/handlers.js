@@ -153,6 +153,10 @@ export const MOCK_POSITIONS = [
 
 export const MOCK_POSITION_QUOTES = { AAPL: 106.0 }
 
+// Latest close per symbol (GET /ohlcv/quotes) — powers the watchlist price column
+// and entry/exit prefill.
+export const MOCK_QUOTES = { AAPL: 213.49, MSFT: 425.0, JPM: 240.1 }
+
 export const MOCK_PERFORMANCE = {
   filters: { is_simulated: true, date_from: null, date_to: null },
   performance: {
@@ -330,6 +334,13 @@ export const handlers = [
     HttpResponse.json(MOCK_SNAPSHOTS)
   ),
 
+  http.get(`${API_URL}/ohlcv/quotes`, ({ request }) => {
+    const symbols = (new URL(request.url).searchParams.get("symbols") || "").split(",").filter(Boolean)
+    const out = {}
+    for (const s of symbols) if (MOCK_QUOTES[s] != null) out[s] = MOCK_QUOTES[s]
+    return HttpResponse.json(out)
+  }),
+
   http.get(`${API_URL}/alerts`, () =>
     HttpResponse.json(MOCK_ALERTS)
   ),
@@ -382,9 +393,11 @@ export const handlers = [
     HttpResponse.json(MOCK_POSITION_QUOTES)
   ),
 
-  http.get(`${API_URL}/positions`, () =>
-    HttpResponse.json(MOCK_POSITIONS)
-  ),
+  http.get(`${API_URL}/positions`, ({ request }) => {
+    const status = new URL(request.url).searchParams.get("status")
+    const rows = status ? MOCK_POSITIONS.filter((p) => p.status === status) : MOCK_POSITIONS
+    return HttpResponse.json(rows)
+  }),
 
   http.post(`${API_URL}/positions/plan`, () =>
     HttpResponse.json(MOCK_EXIT_PLAN)

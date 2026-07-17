@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X, FlaskConical, Briefcase } from "lucide-react"
@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip } from "@/components/ui/Tooltip"
+import { SortHeader } from "@/components/ui/SortHeader"
 import { EXIT_REASONS } from "@/lib/exitMethods"
+import { useSort } from "@/lib/useSort"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -97,12 +99,24 @@ function ProgressBar({ stop, entry, target, current }) {
 // Close dialog
 // ---------------------------------------------------------------------------
 
-function ClosePositionDialog({ position, open, onOpenChange }) {
+function ClosePositionDialog({ position, defaultPrice, open, onOpenChange }) {
   const queryClient = useQueryClient()
   const [exitPrice, setExitPrice] = useState("")
   const [exitReason, setExitReason] = useState("manual")
   const [notes, setNotes] = useState("")
   const [error, setError] = useState(null)
+
+  // Prefill the exit with the last known price when the dialog opens. The dialog
+  // instance is reused across positions, so this keys on open+symbol rather than
+  // relying on useState's mount-only initializer.
+  useEffect(() => {
+    if (open) {
+      setExitPrice(defaultPrice != null ? String(defaultPrice) : "")
+      setExitReason("manual")
+      setNotes("")
+      setError(null)
+    }
+  }, [open, position?.id, defaultPrice])
 
   const { mutate: close, isPending } = useMutation({
     mutationFn: () => api.post(`/positions/${position.id}/close`, {
@@ -289,22 +303,26 @@ function OpenPositionCard({ position, quote, onClose }) {
 // ---------------------------------------------------------------------------
 
 function ClosedTable({ positions }) {
+  // Default to most-recently-closed first.
+  const { sorted, sortKey, sortDir, requestSort } = useSort(positions, { key: "exit_date", dir: "desc" })
+  const headerProps = { activeKey: sortKey, dir: sortDir, onSort: requestSort }
+
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-muted/50 text-muted-foreground">
-            <th className="px-4 py-2.5 text-left font-medium">Symbol</th>
-            <th className="px-4 py-2.5 text-right font-medium">Entry</th>
-            <th className="px-4 py-2.5 text-right font-medium">Exit</th>
-            <th className="px-4 py-2.5 text-right font-medium">P&amp;L</th>
-            <th className="px-4 py-2.5 text-right font-medium">R</th>
-            <th className="px-4 py-2.5 text-right font-medium">Held</th>
-            <th className="px-4 py-2.5 text-left font-medium">Reason</th>
+            <SortHeader label="Symbol" sortKey="symbol" {...headerProps} />
+            <SortHeader label="Entry" sortKey="entry_price" align="right" {...headerProps} />
+            <SortHeader label="Exit" sortKey="exit_price" align="right" {...headerProps} />
+            <SortHeader label="P&L" sortKey="pnl" align="right" {...headerProps} />
+            <SortHeader label="R" sortKey="r_multiple" align="right" {...headerProps} />
+            <SortHeader label="Held" sortKey="hold_days" align="right" {...headerProps} />
+            <SortHeader label="Reason" sortKey="exit_reason" {...headerProps} />
           </tr>
         </thead>
         <tbody>
-          {positions.map((p) => (
+          {sorted.map((p) => (
             <tr key={p.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
               <td className="px-4 py-2.5">
                 <div className="flex items-center gap-2">
@@ -386,7 +404,7 @@ export default function PositionsPage() {
           <Briefcase size={32} className="text-muted-foreground/50" aria-hidden="true" />
           <p className="text-muted-foreground text-sm text-center max-w-sm">
             No positions yet. Open one from the <strong>Screener</strong> or{" "}
-            <strong>Scanner</strong> — simulated by default, so you can build a
+            <strong>Watchlist</strong> — simulated by default, so you can build a
             track record before risking real money.
           </p>
         </div>
@@ -421,6 +439,7 @@ export default function PositionsPage() {
 
       <ClosePositionDialog
         position={closing}
+        defaultPrice={closing ? quotes.get(closing.symbol) : null}
         open={!!closing}
         onOpenChange={(o) => !o && setClosing(null)}
       />

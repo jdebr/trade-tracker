@@ -94,3 +94,32 @@ def get_cached_bars(symbol: str, limit: int = 200) -> list[dict]:
         .execute()
     )
     return list(reversed(result.data))
+
+
+def get_latest_closes(symbols: list[str]) -> dict[str, float]:
+    """
+    Return {symbol: latest close} for the requested symbols, in a single query.
+
+    Symbols with no cached bars are omitted. Used wherever the app needs a current
+    price for arbitrary symbols — the watchlist price column, entry prefill in the
+    exit builder, exit prefill on close.
+    """
+    if not symbols:
+        return {}
+
+    upper = [s.upper() for s in symbols]
+    result = (
+        get_client()
+        .table("ohlcv_cache")
+        .select("symbol,close,date")
+        .in_("symbol", upper)
+        .order("date", desc=True)
+        .execute()
+    )
+
+    closes: dict[str, float] = {}
+    for row in result.data:
+        sym = row["symbol"]
+        if sym not in closes:        # first row per symbol is the newest (date desc)
+            closes[sym] = float(row["close"])
+    return closes

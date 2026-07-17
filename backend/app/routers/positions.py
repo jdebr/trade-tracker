@@ -21,7 +21,7 @@ from app.services.exit_strategy import (
     build_exit_plan,
     load_market_context,
 )
-from app.services.ohlcv_cache import get_cached_bars
+from app.services.ohlcv_cache import get_latest_closes
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/positions", tags=["positions"])
@@ -94,16 +94,7 @@ def get_position_quotes() -> dict[str, float]:
 
     Declared before /{position_id} so "quotes" is not read as a position id.
     """
-    symbols = pos_svc.get_open_position_symbols()
-    if not symbols:
-        return {}
-
-    quotes: dict[str, float] = {}
-    for symbol in symbols:
-        bars = get_cached_bars(symbol, limit=1)
-        if bars:
-            quotes[symbol] = float(bars[-1]["close"])
-    return quotes
+    return get_latest_closes(pos_svc.get_open_position_symbols())
 
 
 # ---------------------------------------------------------------------------

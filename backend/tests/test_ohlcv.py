@@ -17,7 +17,9 @@ from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 import pytest
 
-from app.services.ohlcv_cache import is_cache_fresh, upsert_bars, get_cached_bars
+from app.services.ohlcv_cache import (
+    is_cache_fresh, upsert_bars, get_cached_bars, get_latest_closes,
+)
 from app.services.market_data import fetch_ohlcv, TwelveDataError
 
 
@@ -82,6 +84,37 @@ def test_is_cache_fresh_returns_false_for_old_bar():
 
     with patch("app.services.ohlcv_cache.get_client", return_value=mock_client):
         assert is_cache_fresh("AAPL") is False
+
+
+# ---------------------------------------------------------------------------
+# get_latest_closes — latest close per symbol, single query
+# ---------------------------------------------------------------------------
+
+def test_get_latest_closes_returns_newest_close_per_symbol():
+    # Rows come back date-descending; the first row seen per symbol is the newest.
+    rows = [
+        {"symbol": "AAPL", "close": 213.49, "date": "2026-07-15"},
+        {"symbol": "AAPL", "close": 210.00, "date": "2026-07-14"},
+        {"symbol": "MSFT", "close": 425.00, "date": "2026-07-15"},
+    ]
+    mock_client = MagicMock()
+    (mock_client.table.return_value
+                .select.return_value
+                .in_.return_value
+                .order.return_value
+                .execute.return_value.data) = rows
+
+    with patch("app.services.ohlcv_cache.get_client", return_value=mock_client):
+        closes = get_latest_closes(["AAPL", "MSFT"])
+
+    assert closes == {"AAPL": 213.49, "MSFT": 425.00}
+
+
+def test_get_latest_closes_empty_input_makes_no_query():
+    mock_client = MagicMock()
+    with patch("app.services.ohlcv_cache.get_client", return_value=mock_client):
+        assert get_latest_closes([]) == {}
+    mock_client.table.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

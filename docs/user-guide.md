@@ -11,7 +11,6 @@ A personal assistant for finding and monitoring swing trades. It does **not** ex
 3. [Planning a Trade](#planning-a-trade)
 4. [Pages](#pages)
    - [Watchlist](#watchlist)
-   - [Scanner](#scanner)
    - [Screener](#screener)
    - [Charts](#charts)
    - [Alerts](#alerts)
@@ -47,11 +46,11 @@ Once data is refreshed, click **Screen Tickers** on the Screener page. This scor
 
 From the Screener results, click **+** next to any symbol to add it to your watchlist. Or go to the **Watchlist** page and type a symbol directly into the search box.
 
-You need at least one watchlist ticker before the Scanner or Charts pages will show anything.
+You need at least one watchlist ticker before the Watchlist readings or Charts will show anything.
 
 ### 4. Run your first scan
 
-Go to the **Scanner** page and click **Run Scan Now**. This fetches fresh price data and indicator values for your watchlist, and fires any alerts that apply.
+Go to the **Watchlist** page and click **Update Now**. This fetches fresh price data and indicator values for your watchlist, and fires any alerts that apply.
 
 ---
 
@@ -70,7 +69,7 @@ Go to the **Scanner** page and click **Run Scan Now**. This fetches fresh price 
 
 1. Check the **Alerts** page. Look at the **Positions** tab first — those are trades you already have money in.
 2. Check the **Positions** page to see where each open trade sits between its stop and its target.
-3. Review the **Scanner** table for current indicator levels on your watchlist.
+3. Review the **Watchlist** table for current indicator levels on your tickers.
 4. Decide: hold, adjust the stop, or close.
 5. If you closed something in your brokerage, **record it on the Positions page** while you still remember the fill price.
 
@@ -88,7 +87,7 @@ Open the **Reports** page and look at what's actually working — especially the
 
 ## Planning a Trade
 
-When you find a candidate worth trading, click the **target icon** next to it on the Screener or Scanner page. This opens the **exit plan builder**.
+When you find a candidate worth trading, click the **target icon** next to it on the Screener or Watchlist page. This opens the **exit plan builder**, with the entry price pre-filled to the latest close (adjust it to where you actually plan to enter).
 
 The idea is simple: decide where you'll get out *before* you get in — both when you're wrong (the stop) and when you're right (the target).
 
@@ -169,7 +168,22 @@ To record a real trade, tick **Real money** in the builder. Simulated and real r
 
 ### Watchlist
 
-Manage the tickers you're actively monitoring. The watchlist feeds the Scanner, Charts, and intraday alerts.
+Your daily check-in view. One page to **manage** the tickers you're tracking and **read** their current indicator levels. (This combines what used to be two separate pages.)
+
+**The table** — one row per ticker, showing:
+
+| Column | What it shows |
+|---|---|
+| Symbol | Ticker; hover for company name. A green **Open** badge appears if you hold a position in it. |
+| Price | Latest close from the cache |
+| RSI | 14-day RSI. Red ≥ 70 (overbought), Blue ≤ 30 (oversold), Green 35–65 (neutral range) |
+| BB Squeeze | Filled dot = squeeze active (bands are tight; breakout may be coming) |
+| MACD Hist | Histogram value. Green = positive momentum, Red = negative |
+| EMA 50 | Price relative to the 50-day EMA |
+| ATR | 14-day Average True Range (volatility measure) |
+| Actions | 🎯 **Plan a trade** (opens the exit builder) · 🗑 **Remove** from the watchlist |
+
+**Sorting:** click any column header to sort by it; click again to flip ascending/descending. (The closed-positions table on the Positions page works the same way.)
 
 **Adding a ticker:**
 - Type in the symbol search box — it fuzzy-matches against the full S&P 500 universe by default.
@@ -181,41 +195,17 @@ Manage the tickers you're actively monitoring. The watchlist feeds the Scanner, 
 - Click the trash icon on any row. A confirmation dialog appears before anything is deleted.
 - If the removal fails, the ticker reappears automatically (optimistic update with rollback).
 
-**Filtering by group:**
-- Use the pill buttons above the list to filter by group. Click **All** to clear the filter.
+**Filtering by group:** use the pill buttons above the table. Click **All** to clear the filter.
+
+**Updating the data** (the status bar at the top):
+- Click **Update Now** to fetch fresh prices and re-evaluate alert conditions immediately.
+- The button is disabled during cooldown (60 min after any update) and while the scheduler is paused.
+- **Last update / Next update** — when the most recent update ran, and the next scheduled one.
+- **API credits** — Twelve Data usage (e.g. `42/800`). **Paused until** shows in amber when paused.
 
 **Common errors:**
 - *"That symbol is already in your watchlist"* — it's already there, no action needed.
 - *"Symbol not found in the universe"* — the ticker isn't in the `tickers` table. Run **Refresh Data** on the Screener admin panel, then try again.
-
----
-
-### Scanner
-
-Shows the latest indicator snapshot for every ticker on your watchlist. This is your daily check-in view.
-
-**The table columns:**
-
-| Column | What it shows |
-|---|---|
-| Symbol | Ticker; hover for company name |
-| RSI | 14-day RSI. Red ≥ 70 (overbought), Blue ≤ 30 (oversold), Green 35–65 (neutral range) |
-| BB Squeeze | Filled dot = squeeze active (bands are tight; breakout may be coming) |
-| MACD Hist | Histogram value. Green = positive momentum, Red = negative |
-| EMA 50 | Price relative to the 50-day EMA |
-| ATR | 14-day Average True Range (volatility measure) |
-| As of | Date of the snapshot |
-
-**Running a manual scan:**
-- Click **Run Scan Now** to fetch fresh data and re-evaluate alert conditions immediately.
-- The button is disabled during cooldown (60 min after any scan). The remaining time is shown in the status bar.
-- If the scheduler is paused, manual scans are also blocked until you resume it.
-
-**Status bar** (bottom of page):
-- **Last scan** — when the most recent scan completed
-- **Next scan** — the next scheduled run time (across all jobs)
-- **API credits** — Twelve Data usage for today (e.g. `42/800`)
-- **Paused until** — shown in amber if the scheduler is currently paused
 
 ---
 
@@ -268,7 +258,7 @@ Candlestick chart with technical overlay support for any ticker on your watchlis
 - **TradingView** link (top right) — opens the symbol on TradingView.com for deeper analysis
 
 **If the chart is empty:**
-- *"No chart data"* — the ticker hasn't been scanned yet. Go to Scanner → Run Scan Now, then come back.
+- *"No chart data"* — the ticker hasn't been updated yet. Go to Watchlist → Update Now, then come back.
 - *"No bars found for the selected range"* — the zoom range is narrower than the available data. Try a wider range (e.g. All).
 
 ---
@@ -290,7 +280,7 @@ All unacknowledged signal alerts from the EOD scan and intraday poller.
 
 **Two kinds of alert.** The tabs at the top separate them:
 
-- **Opportunities** — "here's a trade you might want to take." These come from the screener and scanner.
+- **Opportunities** — "here's a trade you might want to take." These come from the screener and the daily watchlist update.
 - **Positions** — "a trade you're already in just hit something." A stop, a target, a time limit. These have a coloured spine down the left edge and usually want action today.
 
 See [Alert Types Reference](#alert-types-reference) for what each alert means and how to act on it.
@@ -309,7 +299,7 @@ You'll also see:
 - **Risk (1R)** — the dollar amount on the line.
 - **SIM / LIVE** badge — whether this is a paper trade or real money.
 
-**Closing a trade.** Click **Close**, type the price you actually got filled at, and pick a reason. Before you confirm, the dialog shows you exactly what the result will be in both dollars and R.
+**Closing a trade.** Click **Close** — the exit price is pre-filled with the ticker's last known close; change it to the price you actually got filled at, and pick a reason. Before you confirm, the dialog shows you exactly what the result will be in both dollars and R.
 
 Be honest about the fill price — this is the number every report is built on.
 
@@ -323,7 +313,7 @@ Be honest about the fill price — this is the number every report is built on.
 
 Where you find out whether any of this is working.
 
-Use the tabs at the top to switch between **Simulated**, **Real**, and **Combined** results. They're kept apart on purpose — averaging paper trades you might never have actually taken together with real fills gives you a track record that describes nothing.
+Use the tabs at the top to switch between **Simulated** and **Real** results. They're kept strictly apart on purpose — averaging paper trades you might never have actually taken together with real fills gives you a track record that describes nothing.
 
 **The headline numbers:**
 
@@ -374,11 +364,11 @@ The scheduler runs the EOD scan, intraday poller, earnings check, and Saturday p
 
 **Pause** — stops all scheduled jobs (and blocks manual scans) for a set duration. Useful if you're traveling and don't want alerts firing.
 
-> Go to the Scanner page status bar — paused state is shown with the expiry time. Pause/resume is currently API-only (no UI button). Use `POST /scheduler/pause?hours=N` from the API docs if needed.
+> The Watchlist status bar shows the paused state with its expiry time. Pause/resume is currently API-only (no UI button). Use `POST /scheduler/pause?hours=N` from the API docs if needed.
 
 **Resume** — lifts the pause immediately. Use `POST /scheduler/resume`.
 
-**Cooldown** — after any scan (scheduled or manual), a 60-minute cooldown prevents duplicate runs. The remaining time shows in the Scanner status bar. This does not affect scheduled runs — only the "Run Scan Now" button.
+**Cooldown** — after any update (scheduled or manual), a 60-minute cooldown prevents duplicate runs. The remaining time shows in the Watchlist status bar. This does not affect scheduled runs — only the "Update Now" button.
 
 > **Tech note:** Pause state is in-memory. If the backend restarts (e.g. Render cold start), the scheduler resumes from scratch — no paused state is restored.
 
@@ -432,8 +422,8 @@ Every position alert shows your **unrealized R**, so you can see where the trade
 
 ## Troubleshooting
 
-**Scanner table is empty / "No indicator snapshots found"**
-Run **Scan Now** on the Scanner page. If it's the first time, also make sure you've run **Refresh Data** from the Screener admin panel first.
+**Watchlist table shows no indicator data**
+Click **Update Now** on the Watchlist page. If it's the first time, also make sure you've run **Refresh Data** from the Screener admin panel first.
 
 **Screener shows no results**
 Either the data hasn't been loaded yet (run **Refresh Data**) or the screener hasn't been run (click **Screen Tickers**). On a fresh install, do both in order.
@@ -441,14 +431,14 @@ Either the data hasn't been loaded yet (run **Refresh Data**) or the screener ha
 **"Symbol not found in the universe" when adding a watchlist ticker**
 The ticker isn't in the `tickers` table. Run **Refresh Data** on the Screener admin panel. If the symbol is genuinely outside the S&P 500, it can't be added — the app covers S&P 500 constituents only.
 
-**"Run Scan Now" button is disabled**
-Either the scheduler is paused (check the status bar) or a 60-minute cooldown is active after the last scan. The remaining cooldown time is shown in the status bar.
+**"Update Now" button is disabled**
+Either the scheduler is paused (check the status bar) or a 60-minute cooldown is active after the last update. The remaining cooldown time is shown in the status bar.
 
 **Chart overlays (BB Bands / EMAs) not showing**
-Indicator history needs to be populated. Run a scan first (Scanner → Run Scan Now), then reload the Charts page.
+Indicator history needs to be populated. Click **Update Now** on the Watchlist page first, then reload the Charts page.
 
 **Exit plan builder says "No indicator data for SYMBOL"**
-The app needs an ATR value to size the stop, and it hasn't computed one for that symbol yet. Run a scan (Scanner → **Run Scan Now**), or pick a stop method that doesn't need indicator data — **Fixed %** or **Manual** both work without it.
+The app needs an ATR value to size the stop, and it hasn't computed one for that symbol yet. Click **Update Now** on the Watchlist page, or pick a stop method that doesn't need indicator data — **Fixed %** or **Manual** both work without it.
 
 **The builder says my trade would be 0 shares**
 Your risk budget is smaller than the cost of a single share's worth of risk. If you're risking 1% of a $10,000 account, that's $100 — and a stop $150 below entry can't be sized into. Either tighten the stop, raise the risk percentage, or accept that the trade is too big for the account.
@@ -457,7 +447,7 @@ Your risk budget is smaller than the cost of a single share's worth of risk. If 
 That's expected. The app alerts you; it never closes trades. It has no connection to your broker and can't know your real fill price. Close the trade with your broker, then record the exit on the **Positions** page.
 
 **Reports look wrong / too good / too bad**
-Check which tab you're on — **Simulated**, **Real**, and **Combined** show very different things. And check the trade count: below about 20 closed trades the numbers are noise, which is why the app tags them as thin.
+Check which tab you're on — **Simulated** and **Real** are kept strictly separate and show very different things. And check the trade count: below about 20 closed trades the numbers are noise, which is why the app tags them as thin.
 
 **A position's symbol disappeared from my watchlist and I stopped getting alerts on it**
 It shouldn't. Open positions are monitored whether or not the symbol is on your watchlist. If alerts genuinely stopped, check that the backend is awake (see below).

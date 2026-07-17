@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.config import ALLOWED_ORIGINS
+from app.config import ALLOWED_ORIGINS, ENVIRONMENT
 from app.dependencies import get_current_user
 from app.routers import (
     health, watchlist, ohlcv, indicators, screener, alerts, scheduler,
@@ -26,9 +26,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Trade Tracker API", version="0.1.0", lifespan=lifespan)
 
+# In development, allow any localhost port so a Vite fallback port (5174, etc.)
+# still works without reconfiguring. Production uses the explicit origin list only.
+_dev_origin_regex = (
+    r"http://(localhost|127\.0\.0\.1):\d+" if ENVIRONMENT != "production" else None
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=_dev_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

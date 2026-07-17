@@ -7,7 +7,6 @@ import Layout from "@/components/layout/Layout"
 import LoginPage     from "@/pages/LoginPage"
 import ScreenerPage  from "@/pages/ScreenerPage"
 import WatchlistPage from "@/pages/WatchlistPage"
-import ScannerPage   from "@/pages/ScannerPage"
 import ChartPage     from "@/pages/ChartPage"
 import AlertsPage    from "@/pages/AlertsPage"
 import PositionsPage from "@/pages/PositionsPage"
@@ -33,8 +32,8 @@ export default function App() {
           <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
             <Route index element={<Navigate to="/screener" replace />} />
             <Route path="/screener"  element={<ScreenerPage />}  />
-            <Route path="/scanner"   element={<ScannerPage />}   />
             <Route path="/watchlist" element={<WatchlistPage />} />
+            <Route path="/scanner"   element={<Navigate to="/watchlist" replace />} />
             <Route path="/positions" element={<PositionsPage />} />
             <Route path="/chart"     element={<ChartPage />}     />
             <Route path="/alerts"    element={<AlertsPage />}    />

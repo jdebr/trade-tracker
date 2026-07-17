@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, CheckCircle, Target } from "lucide-react"
+import { Plus, CheckCircle, Target, Briefcase } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -95,43 +95,62 @@ const SIGNALS = [
 function AddWatchlistButton({ symbol, watchlistSet, onAdd, isPending }) {
   const inWatchlist = watchlistSet.has(symbol)
   if (inWatchlist) {
+    // Occupy the same h-7 w-7 footprint as the add button so the adjacent Plan
+    // button doesn't shift when a ticker flips to "on watchlist".
     return (
-      <CheckCircle
-        size={16}
-        className="text-green-500 dark:text-green-400"
-        aria-label={`${symbol} already in watchlist`}
-      />
+      <Tooltip content={`${symbol} is on your watchlist`}>
+        <span
+          className="inline-flex h-7 w-7 items-center justify-center cursor-help"
+          aria-label={`${symbol} already in watchlist`}
+        >
+          <CheckCircle size={16} className="text-green-500 dark:text-green-400" aria-hidden="true" />
+        </span>
+      </Tooltip>
     )
   }
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-7 w-7 p-0"
-      aria-label={`Add ${symbol} to watchlist`}
-      disabled={isPending}
-      onClick={() => onAdd(symbol)}
-    >
-      <Plus size={14} aria-hidden="true" />
-    </Button>
+    <Tooltip content={`Add ${symbol} to watchlist`}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 w-7 p-0"
+        aria-label={`Add ${symbol} to watchlist`}
+        disabled={isPending}
+        onClick={() => onAdd(symbol)}
+      >
+        <Plus size={14} aria-hidden="true" />
+      </Button>
+    </Tooltip>
   )
 }
 
-function PlanTradeButton({ row, onPlan }) {
+function OpenPositionBadge() {
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-7 w-7 p-0"
-      aria-label={`Plan a trade for ${row.symbol}`}
-      onClick={() => onPlan(row)}
-    >
-      <Target size={14} aria-hidden="true" />
-    </Button>
+    <Tooltip content="You hold an open position in this ticker.">
+      <Badge variant="bull" className="gap-1 cursor-help ml-1.5">
+        <Briefcase size={10} aria-hidden="true" /> Open
+      </Badge>
+    </Tooltip>
   )
 }
 
-function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSymbol, onPlan }) {
+function PlanTradeButton({ row, name, onPlan }) {
+  return (
+    <Tooltip content={`Plan a trade for ${name || row.symbol}`}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 w-7 p-0"
+        aria-label={`Plan a trade for ${row.symbol}`}
+        onClick={() => onPlan(row)}
+      >
+        <Target size={14} aria-hidden="true" />
+      </Button>
+    </Tooltip>
+  )
+}
+
+function ResultsTable({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchlist, addingSymbol, onPlan }) {
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-border mt-4">
       <table className="w-full text-sm">
@@ -160,6 +179,7 @@ function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
                 <Tooltip content={nameMap.get(row.symbol)}>
                   <span className="cursor-default">{row.symbol}</span>
                 </Tooltip>
+                {openSymbols.has(row.symbol) && <OpenPositionBadge />}
               </td>
               <td className="px-4 py-3"><ScoreBadge score={row.signal_score} /></td>
               <td className="px-4 py-3 tabular-nums">
@@ -172,7 +192,7 @@ function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
               ))}
               <td className="px-4 py-3">
                 <div className="flex items-center justify-center gap-1.5">
-                  <PlanTradeButton row={row} onPlan={onPlan} />
+                  <PlanTradeButton row={row} name={nameMap.get(row.symbol)} onPlan={onPlan} />
                   <AddWatchlistButton
                     symbol={row.symbol}
                     watchlistSet={watchlistSet}
@@ -193,7 +213,7 @@ function ResultsTable({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
 // Results card list (mobile)
 // ---------------------------------------------------------------------------
 
-function ResultsCards({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSymbol, onPlan }) {
+function ResultsCards({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchlist, addingSymbol, onPlan }) {
   return (
     <div className="md:hidden space-y-3 mt-4">
       {rows.map((row) => (
@@ -207,6 +227,7 @@ function ResultsCards({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
               <Tooltip content={nameMap.get(row.symbol)}>
                 <span className="font-semibold tracking-wide cursor-default">{row.symbol}</span>
               </Tooltip>
+              {openSymbols.has(row.symbol) && <OpenPositionBadge />}
             </div>
             <div className="flex items-center gap-2">
               {row.close_price != null && (
@@ -215,7 +236,7 @@ function ResultsCards({ rows, nameMap, watchlistSet, onAddToWatchlist, addingSym
                 </span>
               )}
               <ScoreBadge score={row.signal_score} />
-              <PlanTradeButton row={row} onPlan={onPlan} />
+              <PlanTradeButton row={row} name={nameMap.get(row.symbol)} onPlan={onPlan} />
               <AddWatchlistButton
                 symbol={row.symbol}
                 watchlistSet={watchlistSet}
@@ -351,6 +372,17 @@ export default function ScreenerPage() {
   const watchlistSet = useMemo(
     () => new Set(watchlist.map((e) => e.symbol)),
     [watchlist]
+  )
+
+  // ---- Open positions (to badge rows you're already in) ----
+  const { data: openPositions = [] } = useQuery({
+    queryKey: ["positions", "open"],
+    queryFn: () => api.get("/positions?status=open"),
+    staleTime: 60_000,
+  })
+  const openSymbols = useMemo(
+    () => new Set(openPositions.map((p) => p.symbol)),
+    [openPositions]
   )
 
   // ---- Add to watchlist ----
@@ -579,6 +611,7 @@ export default function ScreenerPage() {
             rows={results}
             nameMap={nameMap}
             watchlistSet={watchlistSet}
+            openSymbols={openSymbols}
             onAddToWatchlist={addToWatchlist}
             addingSymbol={addingSymbol}
             onPlan={setPlanningRow}
@@ -587,6 +620,7 @@ export default function ScreenerPage() {
             rows={results}
             nameMap={nameMap}
             watchlistSet={watchlistSet}
+            openSymbols={openSymbols}
             onAddToWatchlist={addToWatchlist}
             addingSymbol={addingSymbol}
             onPlan={setPlanningRow}
