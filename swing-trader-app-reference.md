@@ -93,7 +93,10 @@ Three backend modes. Note the naming: the daily watchlist scan is a backend job 
 | Pre-market earnings check | 8:00 AM ET (Mon–Fri) | Watchlist (~20) | Twelve Data `/earnings` or yfinance | ~20/day |
 | EOD scan | 4:15 PM ET (Mon–Fri) | Watchlist (~20) | Twelve Data | ~20/day |
 | Universe prefetch + screener | Saturday ~11 PM ET | All 505 tickers | yfinance (TD fallback for failures) | ~0–30/week |
+| Storage retention cleanup | Sunday 4:00 AM ET | — | — | 0 |
 | **Daily Twelve Data budget** | | | | **~140 used / 800 available** |
+
+**Storage retention cleanup** (`services/cleanup.py`, `run_cleanup()`) prunes the two re-derivable caches — `ohlcv_cache` and `indicator_snapshots` older than 18 months — and stale `alerts` older than 90 days. It never touches `positions`, `position_events`, or `screener_results`: those are the analytics substrate and the filter-tuning dataset. Cutoffs are absolute dates so the job is idempotent (a missed run self-corrects), deletes are batched, and alerts referenced by a surviving position/event are protected (the provenance FK is `ON DELETE SET NULL`, so pruning a referenced alert would silently erase a kept trade's provenance). The 18-month window sits above the ~14-month floor that indicator computation needs (`BB_SQUEEZE_WINDOW + 50` = 302 trading days). Also runnable on demand via `POST /scheduler/cleanup`.
 
 ### Screener — Two-Pass Logic
 

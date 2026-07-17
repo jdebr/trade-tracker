@@ -25,6 +25,18 @@ async def trigger():
     }
 
 
+@router.post("/cleanup")
+async def cleanup():
+    """
+    Manually run the storage retention cleanup immediately.
+    Prunes the re-derivable caches (OHLCV / indicators, 18-month window) and
+    stale alerts (90-day window). Trade records and screener history are never
+    touched. Returns a per-table count of rows deleted.
+    """
+    summary = await svc.trigger_cleanup()
+    return {"message": "Cleanup completed", "deleted": summary}
+
+
 @router.post("/pause")
 async def pause(
     hours: float = Query(

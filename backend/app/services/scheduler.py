@@ -45,6 +45,7 @@ from app.services.prefetch import run_data_refresh
 from app.services.screener import run_screener
 from app.services.intraday import run_intraday_poll
 from app.services.earnings import run_earnings_check
+from app.services.cleanup import run_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +203,16 @@ async def earnings_job() -> None:
         logger.error("Earnings check failed: %s", exc, exc_info=True)
 
 
+async def cleanup_job() -> None:
+    """APScheduler cron entry point for the weekly storage retention cleanup (Sun 4:00 ET)."""
+    logger.info("Weekly storage cleanup starting")
+    try:
+        summary = await asyncio.to_thread(run_cleanup)
+        logger.info("Storage cleanup complete: %s", summary)
+    except Exception as exc:
+        logger.error("Storage cleanup failed: %s", exc, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Manual trigger
 # ---------------------------------------------------------------------------
@@ -228,6 +239,12 @@ async def trigger_now() -> tuple[bool, str, ScanResult | None]:
     logger.info("Manual scan trigger")
     result = await _run_scan_job()
     return True, "Scan completed", result
+
+
+async def trigger_cleanup() -> dict:
+    """Manually run the storage retention cleanup outside the weekly schedule."""
+    logger.info("Manual cleanup trigger")
+    return await asyncio.to_thread(run_cleanup)
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +336,22 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=1800,
+    )
+
+    # Weekly storage cleanup — Sunday at 4:00 ET (after Saturday's prefetch)
+    _scheduler.add_job(
+        cleanup_job,
+        trigger=CronTrigger(
+            day_of_week="sun",
+            hour=4,
+            minute=0,
+            timezone="America/New_York",
+        ),
+        id="storage_cleanup",
+        name="Weekly storage cleanup",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=7200,
     )
 
     # Intraday quote poll — Mon–Fri at 9:30, 11:00, 12:30, 14:00, 15:30 ET
