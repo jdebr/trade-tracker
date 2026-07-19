@@ -763,7 +763,329 @@ Review and adjust alert thresholds based on real data observed after the app has
 
 ---
 
-### 18. ⬜ Future work / next features
+### 18. ⬜ Expression rule engine (foundation)
+
+A single, reusable boolean-expression engine that both custom indicators (M19) and custom alerts (M21) are built on. This is the linchpin: build it once, generically, and every downstream "user-defined condition" feature falls out of it.
+
+**Design direction — adopt the JsonLogic *format*, with a strict backend evaluator.** Rather than invent an expression language, copy the well-known open-source pattern. [JsonLogic](https://jsonlogic.com/) represents rules as JSON, which is the ideal fit here: rules serialize straight into a `jsonb` column, ship to the browser for building/validation via the original [`json-logic-js`](https://github.com/jwadhams/json-logic-js), and are deterministic, side-effect-free, and introspectable (walk the AST to see which variables a rule uses). A human-readable formatter renders `{"<":[{"var":"rsi_14"},35]}` as `RSI(14) < 35` for display. (Alternative considered: a string DSL via [`simpleeval`](https://github.com/danthedeckie/simpleeval)/`evalidate` — more readable to hand-write but needs a parser on both ends and is harder to introspect. JsonLogic wins for a builder UI + signal attribution.) **We keep the JsonLogic format but evaluate on the backend with a small purpose-built interpreter** ([`json-logic-py`](https://github.com/nadirizr/json-logic-py) serves as reference), because stock JsonLogic inherits JS null-coercion (`null < 35` → `true`) — dangerous here, since a missing RSI would silently satisfy an oversold rule. See the technical plan for the strict null semantics.
+
+**The unifying concept — a per-symbol feature dictionary.** Each scan/screener run assembles a flat `{variable_name: value}` map per symbol: raw indicator values (`rsi_14`, `macd_hist`, `bb_width`…), derived booleans (`bb_squeeze`, `above_ema50`…), and later candlestick flags (`engulfing_bullish`…). An indicator (M19) and an alert rule (M21) are both just named JsonLogic expressions evaluated against that dict. This is what "generic enough to reuse the same engine for alerts" means concretely.
+
+**Scope**
+- [ ] Adopt JsonLogic; add `json-logic-py` (backend) + `json-logic-js` (frontend) deps
+- [ ] `services/rule_engine.py`: `evaluate(rule, features)`, `extract_variables(rule)`, `validate(rule)` (schema + unknown-variable check)
+- [ ] Comparison operators (`< <= > >= == !=`) + logical (`and`/`or`/`not`) over named variables — keep the surface minimal but complete
+- [ ] `build_feature_context(symbol)` — assembles the flat variable dict from `indicator_snapshots` + `ohlcv_cache`
+- [ ] Variable registry with metadata (name, type, description, source) driving the builder UI + reusing the `indicators.js` tooltip treatment
+- [ ] Human-readable formatter for display; frontend mirror for live validation/preview
+- [ ] Tests: evaluation truth tables, variable extraction, validation errors, formatter
+
+**Dependencies:** none — foundation for M19, M21 (and consumed by M20, M22).
+
+#### Technical plan (Phase B)
+
+**Format vs. evaluator.** Adopt the JsonLogic *format* (the interchange standard) so the same rule JSON is stored in `jsonb`, shipped to the browser, and built/validated there with `json-logic-js`. But evaluate on the backend with a small strict interpreter (~60 lines) rather than stock JsonLogic, for **trading-safe null semantics**: any comparison with a missing/None operand evaluates to `False`, while `and`/`or` compose normally (so `bb_squeeze OR rsi_14 < 35` still fires on the squeeze even when `rsi_14` is null). To keep the builder's preview identical to production, **preview evaluates via a backend endpoint, never client-side.**
+
+**New files (backend)**
+- `services/rule_engine.py`
+  - `evaluate(rule, features) -> bool` — strict, null-safe interpreter over the operator allowlist
+  - `extract_variables(rule) -> set[str]` — walks the AST collecting `var` refs (feeds M19 signal attribution + validation)
+  - `validate(rule, known_vars) -> list[str]` — error messages for: disallowed operator, unknown variable, malformed node, depth/size over cap; `[]` means valid
+  - `format_human(rule) -> str` — renders `RSI(14) < 35 AND bb_squeeze` for display
+  - Operator allowlist: `var`; `== != < <= > >=`; `and or ! !!`; chained `<`/`<=` for ranges (`{"<":[35,{"var":"rsi_14"},65]}`); arithmetic `+ - * /` (pending decision below)
+  - Safety caps: max node count (~100) + max depth (~10)
+- `services/feature_context.py`
+  - `VARIABLE_REGISTRY` — `{name, type, description, source, group}` for every readable variable (`rsi_14`, `macd_line/signal/hist`, `bb_upper/middle/lower/width`, `bb_squeeze`, `ema_8/21/50`, `atr_14`, `obv`, `close`, `vol_3d`, `vol_20d`, …). Single source of truth; drives validation + the builder UI + tooltips (reuse the `indicators.js` treatment)
+  - `build_feature_context(symbol) -> dict` — flat variable dict from the latest `indicator_snapshots` row + recent `ohlcv_cache` (close, `vol_3d`, `vol_20d`, mirroring `pass2_score`'s current inline derivations). Missing fields → None
+  - `build_feature_contexts(symbols) -> dict[str, dict]` — batched (one query) for screener/scan use
+- `models/rules.py` — pydantic request/response models
+- `routers/rules.py` (auth-required):
+  - `GET /rules/variables` — the registry, for the builder
+  - `POST /rules/validate` — `{rule}` → `{valid, errors, variables_used}`
+  - `POST /rules/preview` — `{rule, symbol}` → `{value, features_used}`; evaluates against the live feature context so the builder shows a real result
+
+**Frontend**
+- Add `json-logic-js` dep.
+- `lib/ruleEngine.js` — build/serialize JsonLogic nodes, client-side structural validation (well-formed + operator allowlist), and a `formatHuman()` mirror for instant display. **Evaluation/preview always calls the backend** so semantics never diverge.
+- No visual builder yet — M18 ships the primitives; the builder UI lands with M19 (indicators) and M21 (alerts). Optional dev-only panel to exercise `/rules/preview`.
+
+**No schema changes.** M18 is pure services + registry + endpoints. Rules are persisted by the `indicators` table (M19) and `alert_rules` table (M21); M18 defines only how a rule is evaluated, validated, introspected, and displayed.
+
+**Integration seams (consumed later)**
+- M19 scoring: `score += evaluate(ind.expression, features)` over enabled indicators
+- M19 attribution: `entry_signals = {ind.slug: evaluate(ind.expression, features), …}` + raw values; `extract_variables` documents dependencies
+- M21 alerts: `if evaluate(rule.expression, features): fire_alert(...)`
+- M20 candlesticks + M22 indicators: just add entries to `VARIABLE_REGISTRY` + `build_feature_context` — zero engine changes
+
+**Tests** (`test_rule_engine.py`, `test_feature_context.py`)
+- Operator truth tables; nested `and`/`or`/`not`; chained range
+- **Null safety**: `rsi_14 < 35` with `rsi_14=None` → False; `bb_squeeze OR rsi_14<35` fires on squeeze despite null RSI
+- `extract_variables` on nested rules; `validate` catches disallowed op / unknown var / depth-size overflow
+- `format_human` output; `build_feature_context` assembles expected dict from a fixture snapshot; batched variant
+- Safety-cap enforcement
+
+**Open decisions**
+- **Arithmetic operators** (`+ - * /`) in v1? Enables `close > ema_50 * 1.02` and `atr_14 / close` volatility filters — small added surface. (Rec: include; cheap and useful for "within X%" rules.)
+- **Preview scope**: single-symbol only in M18, or also a "how many of the universe match right now" batch preview? (Rec: single-symbol now, batch later.)
+
+---
+
+### 19. ⬜ Custom & extensible indicators
+
+Turn the hardcoded screener signals into user-defined, named indicators built on the M18 engine, and let new indicators flow automatically into scoring and position tracking.
+
+**Scope**
+- [ ] `indicators` table: `name`, `slug`, `type` (one of the current indicator families), `expression` (jsonb JsonLogic), `enabled`, `is_builtin`, `weight`, `deleted_at` (soft delete), timestamps
+- [ ] Migrate the 4 hardcoded Pass-2 signals (`bb_squeeze`, `rsi_in_range`, `above_ema50`, `volume_expansion`) into seeded rows → screener scoring becomes data-driven, not code-driven
+- [ ] Add a brand-new indicator of any current type with a new name → automatically enters the screener scoring algorithm
+- [ ] **Parameter customization:** adding an indicator of an existing type with different parameters (e.g. RSI period 14 → 10, a 3× ATR stop threshold) computes a new named variable (`rsi_10`) that the expression can reference — distinct from just re-thresholding an existing value
+- [ ] Disable + remove (soft delete) indicators
+- [ ] Screener scoring iterates enabled indicators, evaluates each expression, sums (optionally weighted) score
+- [ ] Keep the "light on/off" UI for enable/disable; note a future redesign to prevent UX crowding as the set grows
+- [ ] **Position tracking:** `positions.entry_signals` snapshots *all* enabled indicator results dynamically (not the fixed 4) so new indicators are tracked for reporting; `/reports/by-signal` generalizes to the dynamic set → hone in on working strategies over time
+- [ ] Tests: scoring against seeded indicators, add/disable/soft-delete, dynamic entry_signals snapshot
+
+**Dependencies:** M18.
+
+#### Technical plan (Phase B)
+
+**Two layers.** An indicator has (a) a **scoring rule** — a named JsonLogic boolean over the feature dict, the thing with an on/off light and a weight — and (b) optionally a **computed base variable** it introduces (parameterization, e.g. `rsi_10`). Most user-created indicators are layer (a) only: expressions over the *existing* variable set (`RSI < 30`, `macd_hist > 0 AND above_ema50`) — no new computation, just a new row. Layer (b) is the smaller, more advanced case and is called out as a scoped decision below.
+
+**Schema — migration `003_indicators.sql`**
+- `indicators` table: `id`, `slug` (unique machine name, e.g. `bb_squeeze`), `name` (display), `description`, `type` (family: `rsi`/`macd`/`bb`/`ema`/`atr`/`obv`/`volume`/`composite`), `expression` (jsonb JsonLogic), `weight` (numeric, default 1), `enabled` (bool), `is_builtin` (bool), `sort_order`, `created_at`, `updated_at`, `deleted_at` (soft delete)
+- **Seed the 4 hardcoded Pass-2 signals as builtin rows** so scoring becomes data-driven:
+  - `bb_squeeze` → `{"var":"bb_squeeze"}`
+  - `rsi_in_range` → `{"<=":[35,{"var":"rsi_14"},65]}`
+  - `above_ema50` → `{">":[{"var":"close"},{"var":"ema_50"}]}`
+  - `volume_expansion` → `{">":[{"var":"vol_3d"},{"var":"vol_20d"}]}`
+- `ALTER screener_results ADD COLUMN signals jsonb` — holds `{slug: bool}` for every evaluated indicator (the fixed `bb_squeeze`/`rsi_in_range`/`above_ema50`/`volume_expansion` columns are left in place for historical rows but no longer written; reads move to `signals`)
+
+**Screener scoring rewrite (`screener.py`)**
+- `pass2_score` becomes data-driven: load enabled indicators once, `build_feature_contexts(symbols)` (from M18), then per symbol `score = sum(ind.weight * evaluate(ind.expression, features))` and `signals = {ind.slug: result}`
+- `save_results` writes `signals` (jsonb) + `signal_score`; drops the four hardcoded columns from the insert
+- Deleting/disabling an indicator changes future scores only — historical `screener_results` are immutable
+
+**Dynamic entry-signal attribution (`positions.py`)**
+- `snapshot_entry_signals` rewrite: evaluate **all enabled indicators** against the entry feature context → `entry_signals = {ind.slug: bool, …}` + `signal_score`, alongside the raw values it already keeps (`rsi_14`, `macd_hist`, `atr_14`, `bb_width`, emas, `close_at_entry`) and `triggering_alert_types`
+- Add `features_from_context(ctx)` so we reuse the `MarketContext` already loaded at entry instead of re-querying — keeps one code path with `build_feature_context`
+- **This is what makes new indicators "tracked for positions to hone strategies over time"** — every open records the full enabled set, not a frozen 4
+
+**Reports generalization (`reports.py`)**
+- `performance_by_signal`: replace the hardcoded `SIGNAL_FLAGS` with the dynamic slug set = enabled indicators ∪ any slug present in historical `entry_signals` (soft delete keeps removed indicators reportable)
+- `performance_by_score`: replace `range(5)` with `range(0, max_score+1)` where `max_score` derives from the indicator set
+- **Analytics caveat (document it):** raw `signal_score` semantics shift when the indicator set changes, so raw-score buckets are only comparable within a stable set; per-signal `edge_r` stays valid because it's keyed on individual slugs — and `signal_score_normalized` (below) is the cross-set-comparable alternative
+
+**Cross-set comparability — `signal_score_normalized`.** To make score trackable as the indicator set evolves, compute a normalized score at evaluation time:
+`signal_score_normalized = achieved_weight / total_enabled_weight` — a 0–1 fraction of the maximum score attainable *given the set that was live when the position was opened*. Store it (plus its denominator `max_signal_score`) **frozen** alongside `signal_score` on both `screener_results.signals` and `positions.entry_signals`, so it is never recomputed against a later set. Reports add `performance_by_normalized_score` bucketed into bands (e.g. 0–0.2, 0.2–0.4, …, or quintiles) so "did high-conviction setups outperform?" stays answerable across eras.
+- **What it does and doesn't control for (document it):** normalization corrects for set *size and weight* — a 3-of-4 setup (0.75) and a 6-of-8 setup (0.75) become directly comparable. It does **not** correct for indicator *quality*: diluting the set with a weak indicator still shifts the distribution. It's a strong first-order cross-set metric, not a claim of semantic equivalence. Pairs naturally with per-signal `edge_r`, which remains the tool for judging any individual indicator's worth.
+
+**API + models (`routers/indicators.py`, `models/indicators.py`)** — auth-required
+- `GET /indicators` (filter `enabled`, `include_deleted`) · `GET /indicators/{id}`
+- `POST /indicators` — create; **validates `expression` via `rule_engine.validate` → 422 with errors** on a bad/unknown-variable rule
+- `PATCH /indicators/{id}` — edit name/expression/weight/enabled (re-validates)
+- `DELETE /indicators/{id}` — soft delete (`deleted_at` + `enabled=false`); builtins can be disabled and soft-deleted but the action warns
+- `POST /indicators/{id}/restore`
+
+**UI**
+- Indicators management surface (own page, or a section on Screener/Settings): list with name, human-formatted expression (`format_human`), weight, and the existing **light on/off toggle**; edit/delete actions
+- **First real rule-builder UI** — the create/edit dialog consumes M18's `GET /rules/variables` (variable picker + tooltips), client-side `formatHuman`, and `POST /rules/preview?symbol=` for a live "does this fire on AAPL right now?" check
+- Note the future redesign to prevent crowding as the set grows (per the brainstorm)
+
+**Parameterization — scoped decision (layer b).** Supporting a genuinely new base series (`rsi_10`, `ema_100`) means computing and storing a new variable, not just a new expression. Proposed mechanism: an `ALTER indicator_snapshots ADD COLUMN extra jsonb`, plus a small `base_config` (type + params) that the indicator engine reads to compute extra series via `pandas-ta` and merge into the feature dict + `VARIABLE_REGISTRY` dynamically — no per-indicator migration. **Recommendation:** ship M19 v1 with expression indicators over the existing variable set (covers the bulk of the ask), and fast-follow parameterization as M19.2 using the `extra` jsonb approach.
+
+**Tests**
+- `test_indicators_api.py`: CRUD, expression validation rejection, soft delete + restore, builtin guard
+- `screener` scoring against seeded indicators (score matches the old hardcoded result for the 4 builtins — a regression anchor)
+- `snapshot_entry_signals` produces the dynamic map; `reports` by-signal/by-score over a dynamic slug set
+- Migration seed correctness (4 builtins evaluate identically to today)
+
+**Open decisions**
+- **Parameterization in M19 v1 or defer to M19.2?** (Rec: defer; ship expression-over-existing-vars first.)
+- **Weights:** integer-only in v1 (keeps `signal_score` an integer and `by-score` buckets clean), or allow fractional weights now? (Rec: integer in v1.)
+- **Builtin deletion:** allow soft-deleting the 4 seeded builtins, or disable-only? (Rec: allow soft delete with a warning — nothing is special about them once scoring is data-driven.)
+
+---
+
+### 20. ⬜ Candlestick pattern recognition
+
+Identify common candlestick patterns and their meanings, and expose them as variables to the engine so they're usable anywhere indicators are.
+
+**Scope**
+- [ ] Detect common patterns: doji, engulfing, hammer, shooting star, harami, morning/evening star, marubozu, spinning top, etc.
+- [ ] **Library decision (open question):** [TA-Lib](https://ta-lib.github.io/ta-lib-python/func_groups/pattern_recognition.html) exposes 60+ `CDL*` functions returning +100/−100/0 (bullish/bearish/none) — the standard, but requires the TA-Lib C library at build time (a real consideration on Render). Alternatives: a pandas-ta subset (already in stack) or a small pure-Python implementation of the ~15 highest-value patterns
+- [ ] Pattern metadata (bullish/bearish/neutral + plain-English meaning) for the in-app reference + tooltips
+- [ ] Expose pattern flags as boolean variables in the feature dict → immediately usable in custom indicators (M19) and alerts (M21) with no special-casing
+- [ ] Storage decision: compute on the fly vs persist (columns or a `patterns` jsonb on `indicator_snapshots`)
+- [ ] Tests: pattern detection against known fixtures, feature-dict exposure
+
+**Dependencies:** M18 (to be usable in expressions); otherwise standalone.
+
+#### Technical plan (Phase B)
+
+**Library decision — TA-Lib (the deployment objection is gone).** As of TA-Lib v0.6.5+ the Python package ships [prebuilt manylinux wheels that bundle the C library](https://pypi.org/project/TA-Lib/) (v0.7.0 covers Python 3.10–3.14), so `pip install TA-Lib` works on Render with no source build, and `conda install -c conda-forge ta-lib` covers local Windows dev. That removes the one real reason to avoid it. TA-Lib gives 60+ `CDL*` pattern functions, each returning `+100 / -100 / 0` (bullish / bearish / none) from OHLC arrays — battle-tested, so we don't own pattern-detection correctness. (Fallbacks if an install ever breaks: the small pandas-ta subset already in-stack, or a pure-Python implementation of ~15 patterns. Not recommended given wheels now work.)
+
+**Variable representation.** Each pattern becomes a signed-int variable in the feature dict — `cdl_engulfing ∈ {-100, 0, 100}` — which is the canonical form expressions read (`{"==":[{"var":"cdl_engulfing"},100]}`). For ergonomics in the builder, the registry also advertises derived booleans (`cdl_engulfing_bull`, `cdl_engulfing_bear`) computed from the sign. This keeps the engine unchanged (M18 seam: patterns are just more variables) while making rules readable.
+
+**Curated set.** Surface ~15–20 high-value patterns rather than all 60 to avoid overwhelming the builder: doji (+ dragonfly/gravestone), hammer, inverted hammer, hanging man, shooting star, bullish/bearish engulfing, harami, morning star, evening star, piercing, dark cloud cover, three white soldiers, three black crows, marubozu, spinning top. The full set stays available behind a flag if wanted.
+
+**Computation & storage**
+- Compute inside the existing indicator pipeline (`indicators.py compute_indicators` already loads the OHLC bars) — call the curated `CDL*` functions on the same DataFrame, take the most-recent bar's value per pattern
+- Multi-bar patterns need history (e.g. three-white-soldiers needs 3+ bars); reuse the existing `MIN_BARS` guard, emit `0`/None when insufficient
+- **Storage:** migration `004_candlesticks.sql` → `ALTER indicator_snapshots ADD COLUMN patterns jsonb` holding `{pattern_slug: signed_int}`. Keeps it fully dynamic (no column-per-pattern) and chartable/historical
+- `feature_context.build_feature_context` merges `patterns` into the flat variable dict and `VARIABLE_REGISTRY` gains a `candlestick` group (so they auto-appear in the M19/M21 builders)
+
+**Metadata (`services/candlesticks.py`)**
+- `CURATED_PATTERNS` — the CDL function list + slugs
+- `CANDLESTICK_META` — per pattern: display name, direction (bullish/bearish/neutral), category (reversal/continuation), and a plain-English meaning, for tooltips now and the M22 strategy reference later
+- `compute_patterns(df) -> dict[slug, int]`
+
+**Integration (zero engine changes)**
+- M19 indicators can now be built on patterns, e.g. a `bullish_reversal` indicator = `{"or":[{"==":[{"var":"cdl_engulfing"},100]},{"==":[{"var":"cdl_hammer"},100]}]}`
+- M21 alerts likewise (`bb_squeeze AND cdl_hammer_bull`)
+
+**UI (kept light for M20)**
+- Patterns appear automatically as variables in the rule builder (from the registry) — no bespoke work
+- Surface detected patterns as badges on Watchlist/Chart rows, with the `CANDLESTICK_META` meaning in a tooltip
+- The full pattern **reference** (glossary of meanings) is deferred to M22's strategy library to avoid duplication — M20 ships the data + tooltips, M22 gives it a home page
+
+**Tests** (`test_candlesticks.py`)
+- Detection against hand-crafted OHLC fixtures that unambiguously form a hammer / bullish engulfing / doji (assert sign + magnitude)
+- Short-history guard → no crash, emits 0/None
+- `patterns` jsonb storage round-trip; feature-dict + registry exposure of pattern variables
+- A rule referencing a pattern evaluates correctly through the M18 engine
+
+**Open decisions**
+- **Curated ~15–20 vs. all 60 patterns** surfaced in the UI (Rec: curated, full set behind a flag)
+- **Store curated only, or all detected patterns** in the `patterns` jsonb (Rec: store curated to keep snapshots lean; widen later if needed)
+- **Representation:** signed-int canonical + derived booleans (recommended) vs. booleans only
+
+---
+
+### 21. ⬜ First-class alerts (CRUD + rule engine + notifications)
+
+Promote alerts from a hardcoded condition set to user-managed rules with expressive triggers and outbound notifications.
+
+**Scope**
+- [ ] `alert_rules` table: `name`, `expression` (jsonb) **or** `indicator_id` reference, `message_template`, `notify_channels`, `enabled`, `category`, scope, cooldown/dedup config, `deleted_at`
+- [ ] Full CRUD API + UI: create / edit / enable / disable / delete an alert
+- [ ] A rule's trigger is an inline expression **or** points at an already-created indicator (M19)
+- [ ] **Combine multiple expressions/indicators** via AND/OR/NOT — this falls out for free once the M18 operators are expressive enough (e.g. `(RSI < 35) AND bb_squeeze AND engulfing_bullish`)
+- [ ] **Richer alert-time variables (feedback):** beyond indicator scores, expose live/derived stock data — current `price`, `price_change_pct`/`price_change_abs`, plus position state (`has_open_position`, `position_age_days`, `position_unrealized_r`, distance-to-stop/target) — so rules can read "is a position on, and how long"
+- [ ] **Evaluate on every data arrival (feedback):** all enabled rules run whenever new data lands (intraday poll, EOD scan) — not a separate schedule
+- [ ] **Customizable messages (feedback):** per-rule `message_template` with `{variable}` interpolation rendered against the alert context
+- [ ] **Alerts UI: sort / search / filter (feedback)** across fired alerts (by rule, symbol, category, date, acknowledged) and the rule list
+- [ ] **Notifications: email first (feedback).** Email only in v1 (low lift, free); **channel is configurable per alert** so SMS (Twilio) can be added later without reshaping the model. Per-rule channel selection + a user contact-settings surface
+- [ ] Tests: CRUD, expression + indicator-pointer triggers, combined rules, message rendering, email dispatch (mocked)
+
+**Dependencies:** M18; best sequenced after M19/M20 so rules can reference custom indicators and candlestick patterns.
+
+#### Technical plan (Phase B)
+
+**The centerpiece — a richer "alert context" (feedback note 1).** Screener-time variables aren't enough for alerts; rules need live and stateful data. Extend the M18 feature dict with a superset used only at alert time:
+- **Price group:** `price` (latest quote), `prev_close`, `price_change_pct`, `price_change_abs`, `intraday_high`/`low` where available
+- **Position group:** `has_open_position` (bool), `position_age_days`, `position_unrealized_r`, `position_pnl_pct`, `distance_to_stop_pct`, `distance_to_target_pct`, `position_is_simulated`
+- **Indicator-score group (lets alerts fire "over indicator scores"):** `signal_score`, `signal_score_normalized`, and each enabled indicator's result as `ind_<slug>` (boolean) — computed by evaluating M19 indicators against the same context
+- New `services/alert_context.py`: `build_alert_context(symbol, price, position=None)` layers these onto `build_feature_context(symbol)`. `VARIABLE_REGISTRY` gains `price` / `position` / `score` groups, each tagged with the **contexts it's valid in** (`screener` vs `alert`) so the M19 indicator builder hides position/price vars while the M21 alert builder shows everything
+
+**Schema — migration `005_alert_rules.sql`**
+- `alert_rules`: `id`, `name`, `description`, `symbol` (nullable — null = evaluate across the watchlist ∪ open-position union, set = one symbol), `expression` (jsonb) **or** `indicator_id` (FK → `indicators`, nullable), `message_template` (text), `notify_channels` (jsonb/text[] — `['email']` in v1), `enabled`, `category` (add `'custom'` to the alerts category vocabulary), `cooldown_minutes` (dedup window), `is_builtin`, `created_at`, `updated_at`, `deleted_at`
+  - CHECK: at least one of `expression` / `indicator_id` present (pointing at an indicator is sugar for `{"var":"ind_<slug>"}`)
+- `ALTER alerts ADD COLUMN alert_rule_id uuid REFERENCES alert_rules(id) ON DELETE SET NULL`, `ADD COLUMN message text`
+- `ALTER app_settings ADD COLUMN notify_email text, ADD COLUMN notify_email_enabled boolean DEFAULT false` (user contact surface)
+
+**Evaluation (`services/alert_engine.py`), feedback note 2**
+- `run_alert_rules(prices)` — load enabled rules once; for each, resolve in-scope symbols (its `symbol`, else the union), `build_alert_context`, `evaluate(rule.expression, ctx)`; on true and **not within `cooldown_minutes`** → render message, insert an `alerts` row (`category='custom'`, `alert_rule_id`, `message`), dispatch notifications
+- **Hook into every data-arrival job** — call it from `run_intraday_poll` and `run_watchlist_scan` right after quotes/indicators refresh, reusing the price dict already assembled there (same seam the position monitor already uses)
+- Dedup keyed on `(alert_rule_id, symbol, date)` plus the per-rule cooldown, mirroring the existing opportunity/position dedup
+- **Future convergence (note, not v1):** once `price`/`position` variables exist, the hardcoded `position_monitor` conditions (`stop_hit`, `target_hit`, `time_stop`) are expressible as seeded builtin `alert_rules`. Keep the working monitor as-is for v1; unify later
+
+**Message rendering (`services/alert_engine.py`), feedback note 3**
+- `render_message(template, ctx) -> str` — safe `{variable}` interpolation over known registry vars only (unknown placeholder → validation error at save time, not runtime), with sensible number formatting; a default template when none is set (e.g. `"{name}: {symbol} @ {price}"`)
+
+**Notifications — email only in v1 (`services/notifications.py`), feedback note 5**
+- `send_email(to, subject, body)` via a transactional API (**Resend** or SendGrid free tier — simpler and better deliverability than raw SMTP; SMTP/Gmail app-password as fallback). Config via env (`RESEND_API_KEY` etc.)
+- Dispatch reads each rule's `notify_channels`; v1 handles `email`, silently skips unconfigured channels. **Per-alert configurable** so adding `sms` later is a channel handler + Twilio creds, no model change
+- Volume is low (a few/day) → send inline within the job with try/except + logging; no queue needed yet
+- SMS explicitly deferred: note the Twilio cost + US A2P 10DLC registration hurdle
+
+**API + models (`routers/alert_rules.py`, `models/alert_rules.py`)** — auth-required
+- `GET /alert-rules` (filter `enabled`/`category`/`symbol`) · `GET /alert-rules/{id}`
+- `POST /alert-rules` — create; **validates `expression` against the alert-context variable set** and validates `message_template` placeholders → 422 on error
+- `PATCH /alert-rules/{id}` · `DELETE /alert-rules/{id}` (soft delete)
+- `POST /alert-rules/{id}/test` — evaluate now against a symbol and optionally send a test email (verifies wiring end-to-end)
+- Extend the existing fired-alerts endpoints with **sort/search/filter** params (feedback note 4)
+
+**UI**
+- **Alert-rules management page** — list (name, human-formatted expression, channels, enabled toggle, edit/delete) + create/edit dialog reusing the M19 rule builder, extended with the price/position/score variables, a **message-template editor** (with a variable picker + live preview via `/alert-rules/{id}/test`), channel toggles (email on, SMS shown-but-disabled), and scope (all vs one symbol)
+- **Fired-alerts page** — add sort/search/filter controls (by rule, symbol, category, date, acknowledged), reusing the existing `useSort` hook + a debounced search
+- **Settings** — notification email + enable toggle
+
+**Tests** (`test_alert_rules_api.py`, `test_alert_engine.py`, `test_alert_context.py`)
+- CRUD + expression/template validation rejection; soft delete
+- `build_alert_context` assembles price/position/score variables (position present vs absent)
+- `run_alert_rules`: fires on a true rule, respects cooldown/dedup, scope resolution (single symbol vs union), indicator-pointer rule
+- `render_message` interpolation + unknown-placeholder rejection
+- Email dispatch mocked; `notify_channels` honored; unconfigured channel skipped
+
+**Open decisions**
+- **Email provider:** Resend vs SendGrid vs SMTP/Gmail app-password (Rec: Resend — simplest API + free tier)
+- **Cooldown model:** per-rule `cooldown_minutes` vs. once-per-day dedup like today (Rec: `cooldown_minutes`, defaulting to same-day)
+- **Scope default:** watchlist ∪ open positions vs. also allowing full-universe rules (Rec: union only in v1 — universe-wide alerting is an API-cost multiplier)
+
+---
+
+### 22. ⬜ Indicator & strategy library + strategy tagging
+
+Broaden the indicator set, add an in-app strategy quick-reference, and tag positions by strategy so reporting can segment on it.
+
+**Scope**
+- [ ] Research + add new indicators (candidates: ADX/DMI, Stochastic, VWAP, Supertrend, CCI, MFI, Williams %R, Ichimoku) → expand the computed feature set, giving the engine more variables
+- [ ] Curated **strategy reference**: basic strategies paired with the indicators each needs (BB-squeeze breakout, RSI mean-reversion, MACD trend, EMA-ribbon pullback, …), sourced from trading literature and folded into the app UX as a quick reference (a Strategies page and/or tooltips)
+- [ ] **Strategy tagging on positions:** add a `strategy_tag` / free-text tag to `positions` (pick from the library or type any custom string), searchable/filterable in reports → **performance by strategy**
+- [ ] Tests: new indicator computation, performance-by-strategy reporting
+
+**Dependencies:** new indicators feed the M19 registry; strategy tagging is independent and could ship anytime as a quick win.
+
+#### Technical plan (Phase B)
+
+Three sub-features. Decisions locked: **Tier A + MFI** indicator set, **content-as-code** knowledge base, tag list seeded with **indicator + strategy names**.
+
+**A. New indicators (5) — ADX/DMI, Stochastic, Supertrend, Keltner, MFI**
+- Compute in the existing `indicators.py` pipeline via `pandas-ta` (all natively supported): `adx` → `adx_14`, `di_plus`, `di_minus`; `stoch(14,3,3)` → `stoch_k`, `stoch_d`; `supertrend(10,3)` → `supertrend`, `supertrend_dir`; `kc(20, 2×ATR)` → `kc_upper/middle/lower`; `mfi(14)` → `mfi_14`
+- Derived **`ttm_squeeze`** boolean: BB sitting inside Keltner (`bb_upper < kc_upper AND bb_lower > kc_lower`) — the high-probability squeeze the research highlights; a strict upgrade to the percentile-based `bb_squeeze`
+- **Storage:** migration `006_indicators_extra.sql` adds explicit typed columns (matching the existing `indicator_snapshots` convention, keeping them queryable/chartable) for the above + `ttm_squeeze`
+- `feature_context.build_feature_context` reads the new columns; `VARIABLE_REGISTRY` gains entries (each linked to a KB slug). **No engine or scoring changes** — they arrive as variables the user composes into M19 indicators / M21 alerts. Optionally seed 1–2 example indicators (e.g. `adx_strong` = `adx_14 > 25`) as disabled builtins to demonstrate
+- Tier B indicators (Williams %R, CCI, PSAR, Donchian, Ichimoku, VWAP, Aroon, ROC, CMF, pivots, Fibonacci) recorded in M23's backlog as the "future possibilities" list
+
+**B. Knowledge base / quick-reference (content-as-code)**
+- Canonical content module `app/knowledge/registry.py` — the single source for all explainer content, keyed by slug, entry `type` ∈ {`indicator`, `pattern`, `strategy`, `concept`, `exit_method`}. Each entry: `name`, `gist` (one line — what it tells you), `how_to_read` (optional one line), `external_url` (link out for depth), `category`, `related` (slugs). Deliberately terse; **zero DB storage**
+- Served read-only via `GET /knowledge`; the M18 `VARIABLE_REGISTRY` references KB entries by slug so descriptions have one home
+- **Consolidation (the "one place" win):** migrate scattered content into the registry — `lib/indicators.js` descriptions, `exitMethods.js`, M20's `CANDLESTICK_META`, and the R-multiple/expectancy explainers — then refactor those call sites onto one shared `<InfoPopover term="…">` component used everywhere a term appears (Screener, Watchlist, Positions, Reports, the rule builder)
+- **Strategy entries** (type=`strategy`): the researched swing strategies (pullback-to-EMA, TTM/BB squeeze breakout, MACD trend-follow, RSI/Stochastic mean-reversion, ADX-filtered momentum, Supertrend trend-follow), each linking the indicators it uses via `related`. This is the strategy quick-reference *and* the source of the strategy tag seeds
+- **UI:** the shared `<InfoPopover>` popup everywhere; a **Reference page** listing entries grouped by type with search — the browse/review/amend home (also houses the M20 pattern glossary)
+- In-app editing is explicitly out of scope (amend via repo); notable as a future option only
+
+**C. Strategy tagging**
+- Migration `007_tags.sql`: `tags` (`id` text PK = normalized slug, `label` text display, `created_at`) + `position_tags` join (`position_id` FK ON DELETE CASCADE, `tag_id` FK, PK `(position_id, tag_id)`)
+- **Normalization at create time:** `normalize_tag(s)` = trim → lowercase → collapse internal whitespace to `_` → single token (e.g. `"Breakout Setup"` → `breakout_setup`). Uniqueness on `id` means `"Breakout"` and `"breakout"` can't duplicate. Any string is allowed
+- **Seed** from indicator slugs + strategy slugs (pulled from the knowledge registry) so both are discoverable immediately; create-on-type for anything else
+- **Service `services/tags.py`:** `list_tags(search, with_counts)`, `upsert_tag(label) -> id`, `set_position_tags(position_id, labels)`, `performance_by_tag()`
+- **API:** `GET /tags?search=` (autocomplete + usage counts) · `POST /tags` · `PATCH /positions/{id}` accepts a `tags` array (normalizes + upserts + links) · `GET /positions?tag=` filter · `GET /reports/by-tag`
+- **UI:** a `TagInput` (autocomplete over existing tags + create-on-type) on the position open/edit dialog; tag chips on position rows; tag filter/search on Positions and Reports; a **performance-by-tag** section in Reports — "which strategies actually work," complementing by-signal
+- **Tests:** normalization (case/whitespace/dedup), seed correctness, tag CRUD + autocomplete search, set/replace position tags, `performance_by_tag` math, `?tag=` filter
+
+**Migrations added by M22:** `006_indicators_extra.sql`, `007_tags.sql`.
+
+**Open decisions**
+- **Seed example indicators** on the 5 new variables (a couple disabled builtins as templates) or ship variables only? (Rec: seed 1–2 disabled examples for discoverability)
+- **Tag separator** `_` vs `-` for the single-token id (Rec: `_`)
+- **Reference page vs. section:** standalone Reference/Knowledge page vs. folding it into an existing page (Rec: standalone page, given it's the consolidation home)
+
+---
+
+### 23. ⬜ Future work / next features (idea backlog)
+
+> The custom-alert / rule-engine ideas that used to live here have been promoted to concrete milestones M18–M21. What remains below is the unscheduled idea parking lot.
 
 #### Universe / Ticker Browser
 A dedicated page for browsing and managing the `tickers` table. Key ideas:
@@ -774,18 +1096,18 @@ A dedicated page for browsing and managing the `tickers` table. Key ideas:
 - Out-of-universe lookup: if a symbol isn't in `tickers`, hit a free public API (e.g. Yahoo Finance or Twelve Data) to fetch basic info and offer an "Add to Universe" flow
 - Full design TBD when we're ready to build
 
-#### Custom Alert Rule Engine
-User-defined alert conditions, replacing or extending the hardcoded 6-condition set. Key ideas:
-- Add/remove/toggle alert rules from the UI
-- Rule builder: combine indicator expressions with AND/OR/NOT operators (e.g. `RSI < 35 AND bb_squeeze = true`)
-- Rules and their enabled/disabled state persisted per user
-- Indicator parameter customization (e.g. change RSI period from 14 to 10); saved per user
-- Support for adding new indicator types beyond the current set
-- Full design TBD — schema changes required (new `alert_rules` table, parameterized `indicator_configs`)
-
 #### LLM Integrations
 - **News summarizer**: scan headlines for watchlist tickers and surface relevant events (earnings, macro, geopolitical) that could affect price — summarized by an LLM
 - **Trade setup advisor**: given current indicators + past trade performance, recommend entry/exit prices, stop loss levels, options/hedging strategies, and flag risks to watch as a trade unfolds
+
+#### Deferred indicators (Tier B, from M22 research)
+Evaluated during M22 and deferred; each is available in `pandas-ta` and would enter as new feature-dict variables when picked up:
+- **Williams %R**, **CCI** — additional bounded oscillators; redundant with RSI/Stochastic until there's a specific need
+- **Parabolic SAR** — trailing/trend; overlaps Supertrend (which we adopted)
+- **Donchian Channels** — breakout / Turtle-style; adds a distinct breakout strategy family
+- **Ichimoku Cloud** — powerful multi-line trend system, but heavy on variables, UI, and interpretation
+- **Anchored VWAP** — needs an anchor-selection UX; more intraday-oriented
+- **Aroon**, **ROC/Momentum**, **CMF / Accumulation-Distribution**, **pivot points**, **Fibonacci retracement** (tools rather than indicators)
 
 #### Deferred from milestone 13
 - **Partial exits / scale-out**: close 50% at 1R and trail the rest. `position_events` already accepts a `partial_exit` type, so no migration is needed — what's missing is the weighted-average P&L maths and the UI
