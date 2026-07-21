@@ -38,6 +38,14 @@ BARS = [
 
 CTX = MarketContext(symbol="AAPL", snapshot=SNAPSHOT, bars=BARS)
 
+# The seeded builtin signal rules, so snapshot_entry_signals can score without a DB.
+_BUILTINS = [
+    {"slug": "bb_squeeze",       "weight": 1, "expression": {"var": "bb_squeeze"}},
+    {"slug": "rsi_in_range",     "weight": 1, "expression": {"<=": [35, {"var": "rsi_14"}, 65]}},
+    {"slug": "above_ema50",      "weight": 1, "expression": {">": [{"var": "close"}, {"var": "ema_50"}]}},
+    {"slug": "volume_expansion", "weight": 1, "expression": {">": [{"var": "vol_3d"}, {"var": "vol_20d"}]}},
+]
+
 OPEN_POSITION = {
     "id": "pos-1",
     "symbol": "AAPL",
@@ -177,6 +185,7 @@ def test_open_position_computes_risk_server_side_and_logs_an_opened_event():
 
     with patch("app.routers.positions.get_client", return_value=db), \
          patch("app.services.positions.get_client", return_value=db), \
+         patch("app.services.signal_rules.get_enabled_rules", return_value=_BUILTINS), \
          patch("app.routers.positions.load_market_context", return_value=CTX), \
          patch("app.routers.positions.pos_svc.get_recent_alert_types", return_value=["bb_squeeze"]):
         response = client.post("/positions", json={
@@ -196,8 +205,11 @@ def test_open_position_computes_risk_server_side_and_logs_an_opened_event():
     assert inserted["stop_price"]         == 94.0
 
     # Signal attribution captured at entry — this is what the reports group by.
-    assert inserted["entry_signals"]["bb_squeeze"] is True
-    assert inserted["entry_signals"]["rsi_in_range"] is True
+    # The dynamic signal set lives under entry_signals["signals"].
+    assert inserted["entry_signals"]["signals"]["bb_squeeze"] is True
+    assert inserted["entry_signals"]["signals"]["rsi_in_range"] is True
+    assert inserted["entry_signals"]["signal_score"] == 3          # bb + rsi + above_ema50
+    assert inserted["entry_signals"]["signal_score_normalized"] == 0.75
     assert inserted["entry_signals"]["triggering_alert_types"] == ["bb_squeeze"]
 
     event = db.table("position_events").insert.call_args[0][0]
@@ -212,6 +224,7 @@ def test_open_position_defaults_to_simulated():
 
     with patch("app.routers.positions.get_client", return_value=db), \
          patch("app.services.positions.get_client", return_value=db), \
+         patch("app.services.signal_rules.get_enabled_rules", return_value=_BUILTINS), \
          patch("app.routers.positions.load_market_context", return_value=CTX), \
          patch("app.routers.positions.pos_svc.get_recent_alert_types", return_value=[]):
         client.post("/positions", json={

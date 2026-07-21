@@ -104,14 +104,37 @@ _VOL_DATA = {
 
 _ALL_SYMBOLS = ["SCR_A", "SCR_B", "SCR_C", "SCR_H", "SCR_I", "SCR_J"]
 
+# The seeded builtin signal rules (data-driven scoring). Evaluating these through
+# the real rule engine must reproduce the old hardcoded scores — the regression
+# anchor for the M19 rewrite.
+_BUILTINS = [
+    {"slug": "bb_squeeze",       "weight": 1, "expression": {"var": "bb_squeeze"}},
+    {"slug": "rsi_in_range",     "weight": 1, "expression": {"<=": [35, {"var": "rsi_14"}, 65]}},
+    {"slug": "above_ema50",      "weight": 1, "expression": {">": [{"var": "close"}, {"var": "ema_50"}]}},
+    {"slug": "volume_expansion", "weight": 1, "expression": {">": [{"var": "vol_3d"}, {"var": "vol_20d"}]}},
+]
+
+# Feature contexts assembled from the fixtures (SCR_I intentionally absent → no snapshot).
+_CONTEXTS = {
+    sym: {
+        "bb_squeeze": ind.get("bb_squeeze"),
+        "rsi_14":     ind.get("rsi_14"),
+        "ema_50":     ind.get("ema_50"),
+        "close":      _VOL_DATA[sym]["last_close"],
+        "vol_3d":     _VOL_DATA[sym]["vol_3d"],
+        "vol_20d":    _VOL_DATA[sym]["vol_20d"],
+    }
+    for sym, ind in _INDICATORS.items()
+}
+
 
 def test_pass2_score_scores_and_ranks_correctly():
     """
     Verify expected signal_score for each symbol and descending rank order.
     SCR_I has no indicator snapshot and must be absent from the results.
     """
-    with patch("app.services.screener._get_indicators", return_value=_INDICATORS), \
-         patch("app.services.screener._get_recent_volumes", return_value=_VOL_DATA):
+    with patch("app.services.screener.build_feature_contexts", return_value=_CONTEXTS), \
+         patch("app.services.signal_rules.get_enabled_rules", return_value=_BUILTINS):
         candidates = pass2_score(_ALL_SYMBOLS)
 
     by_sym = {c["symbol"]: c for c in candidates}
@@ -123,6 +146,13 @@ def test_pass2_score_scores_and_ranks_correctly():
     assert by_sym["SCR_B"]["signal_score"] == 2
     assert by_sym["SCR_H"]["signal_score"] == 1
     assert by_sym["SCR_C"]["signal_score"] == 0
+
+    # Data-driven scoring also carries the dynamic signal map + normalized score.
+    assert by_sym["SCR_A"]["signals"] == {
+        "bb_squeeze": True, "rsi_in_range": True, "above_ema50": True, "volume_expansion": True,
+    }
+    assert by_sym["SCR_A"]["signal_score_normalized"] == 1.0
+    assert by_sym["SCR_J"]["signal_score_normalized"] == 0.75
 
     scores = [c["signal_score"] for c in candidates]
     assert scores == sorted(scores, reverse=True), "Candidates must be ranked descending"
@@ -139,8 +169,8 @@ def test_save_results_inserts_correct_number_of_rows():
     """save_results should insert one row per candidate and return the count."""
     run_at = datetime(2026, 4, 1, 20, 0, 0, tzinfo=timezone.utc)
 
-    with patch("app.services.screener._get_indicators", return_value=_INDICATORS), \
-         patch("app.services.screener._get_recent_volumes", return_value=_VOL_DATA):
+    with patch("app.services.screener.build_feature_contexts", return_value=_CONTEXTS), \
+         patch("app.services.signal_rules.get_enabled_rules", return_value=_BUILTINS):
         candidates = pass2_score(_ALL_SYMBOLS)
 
     mock_client = MagicMock()
@@ -154,6 +184,33 @@ def test_save_results_inserts_correct_number_of_rows():
     call_args = mock_client.table.return_value.insert.call_args[0][0]
     symbols_inserted = {r["symbol"] for r in call_args}
     assert symbols_inserted == {c["symbol"] for c in candidates}
+
+
+def test_save_results_dual_writes_legacy_columns():
+    """The four legacy boolean columns must be populated from the builtin results
+    so the API/frontend/status endpoint keep working during the transition."""
+    run_at = datetime(2026, 4, 1, 20, 0, 0, tzinfo=timezone.utc)
+
+    with patch("app.services.screener.build_feature_contexts", return_value=_CONTEXTS), \
+         patch("app.services.signal_rules.get_enabled_rules", return_value=_BUILTINS):
+        candidates = pass2_score(_ALL_SYMBOLS)
+
+    mock_client = MagicMock()
+    mock_client.table.return_value.insert.return_value.execute.return_value.data = candidates
+    with patch("app.services.screener.get_client", return_value=mock_client):
+        save_results(candidates, run_at)
+
+    rows = {r["symbol"]: r for r in mock_client.table.return_value.insert.call_args[0][0]}
+
+    # SCR_A fires all four → legacy columns True, jsonb + normalized populated.
+    assert rows["SCR_A"]["bb_squeeze"] is True
+    assert rows["SCR_A"]["above_ema50"] is True
+    assert rows["SCR_A"]["signals"]["volume_expansion"] is True
+    assert rows["SCR_A"]["signal_score_normalized"] == 1.0
+    assert rows["SCR_A"]["max_signal_score"] == 4
+    # SCR_C fires none → legacy columns False (dual-written from the signal map).
+    assert rows["SCR_C"]["bb_squeeze"] is False
+    assert rows["SCR_C"]["volume_expansion"] is False
 
 
 def test_get_latest_results_returns_most_recent_run():

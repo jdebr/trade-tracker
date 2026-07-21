@@ -54,7 +54,7 @@ Friday:
 
 ## Database Schema
 
-9 tables in Supabase (Postgres). Schema source of truth: `supabase/schema.sql`.
+10 tables in Supabase (Postgres). Schema source of truth: `supabase/schema.sql`.
 Migrations: `supabase/migrations/` — apply by hand in the Supabase SQL editor.
 
 | Table | Purpose |
@@ -63,7 +63,8 @@ Migrations: `supabase/migrations/` — apply by hand in the Supabase SQL editor.
 | `watchlist` | User's tracked tickers; FK to `tickers.symbol`; optional `group_name` |
 | `ohlcv_cache` | Daily OHLCV bars per symbol; `UNIQUE(symbol, date)` — upserted on every fetch |
 | `indicator_snapshots` | Latest computed indicator values per symbol/date — RSI, MACD, BB, EMA, ATR, OBV |
-| `screener_results` | Output of each screener run — rank, score, signal flags, run timestamp |
+| `signal_rules` | User-defined named scoring rules (M19) — JsonLogic `expression`, `weight`, `enabled`; 4 seeded builtins. Expression immutable once created |
+| `screener_results` | Output of each screener run — rank, `signal_score`, `signals` (JSONB) + `signal_score_normalized`, run timestamp |
 | `alerts` | Fired alert conditions — type, symbol, `category`, `position_id`, details (JSONB) |
 | `positions` | Trades taken (real or simulated) — entry, exit plan, outcome, `entry_signals` (JSONB) |
 | `position_events` | Append-only log of everything that happened to a position |
@@ -114,6 +115,8 @@ The screener reads from pre-populated `ohlcv_cache` and `indicator_snapshots` �
 | Volume expansion | 3-day avg volume > 20-day avg volume |
 
 Each ticker scores 0–4; output is ranked by `signal_score` descending. Results are waiting on Sunday morning — no manual run required. A low-key admin button remains available for exceptional re-runs.
+
+> **As of M19 (backend):** these four are no longer hardcoded — they are seeded `signal_rules` rows (JsonLogic expressions), and Pass 2 scoring iterates the enabled signal set via the M18 engine, writing a dynamic `signals` map + `signal_score_normalized` alongside the four legacy columns (dual-written for back-compat). Adding/disabling a signal changes scoring with no code change. Score stays 0–4 until custom signals are enabled. See milestone 19.
 
 ### Scanner — EOD Alert Conditions
 
@@ -654,7 +657,7 @@ Document the app for a user who didn't build it — covers setup, daily workflow
 
 ---
 
-### 13. 🔄 Position tracking, exit strategy & performance reporting
+### 13. ✅ Position tracking, exit strategy & performance reporting
 
 Closes the loop between "here's a trade idea" and "here's how it turned out." Plan an exit before entering, record the position as an event stream, monitor it with alerts, and report on results segmented by the signals that triggered entry. Simulation mode accumulates outcome data before real money is at risk.
 
@@ -663,8 +666,8 @@ Closes the loop between "here's a trade idea" and "here's how it turned out." Pl
 - [x] Slice 2 — Position alerts (`position_monitor.py`), wired into the intraday poll and EOD scan
 - [x] Slice 3 — Positions page, exit strategy builder dialog, Settings page, alert category tabs, nav
 - [x] Slice 4 — Performance reporting: metrics, equity curve, signal attribution
-- [ ] Apply migration `002_positions.sql` in the Supabase SQL editor
-- [ ] Live verification: open a simulated position end-to-end, confirm a position alert fires
+- [x] Apply migration `002_positions.sql` in the Supabase SQL editor
+- [x] Live verification: open a simulated position end-to-end, confirm a position alert fires (deployed to production)
 
 **Testing criteria**
 - [x] Exit calculator: every stop/target method, sizing maths, R:R, warnings, hard errors
@@ -763,7 +766,7 @@ Review and adjust alert thresholds based on real data observed after the app has
 
 ---
 
-### 18. ⬜ Expression rule engine (foundation)
+### 18. ✅ Expression rule engine (foundation)
 
 A single, reusable boolean-expression engine that both custom indicators (M19) and custom alerts (M21) are built on. This is the linchpin: build it once, generically, and every downstream "user-defined condition" feature falls out of it.
 
@@ -830,9 +833,11 @@ A single, reusable boolean-expression engine that both custom indicators (M19) a
 
 ---
 
-### 19. ⬜ Custom & extensible indicators
+### 19. 🔄 Custom & extensible indicators
 
 Turn the hardcoded screener signals into user-defined, named indicators built on the M18 engine, and let new indicators flow automatically into scoring and position tracking.
+
+**Status: M19a (backend) complete** — `signal_rules` table + service + CRUD API, data-driven screener scoring (dual-write), dynamic `entry_signals`, `signal_score_normalized`, reports generalized; 321 tests green; two adversarial reviews passed; expression immutability locked in. **Pending:** migration 003 applied to the live DB, then commit. **M19b (frontend) not started** — signal management page, the first rule-builder UI, and a dynamic Screener display.
 
 **Scope**
 - [ ] `indicators` table: `name`, `slug`, `type` (one of the current indicator families), `expression` (jsonb JsonLogic), `enabled`, `is_builtin`, `weight`, `deleted_at` (soft delete), timestamps
@@ -849,21 +854,27 @@ Turn the hardcoded screener signals into user-defined, named indicators built on
 
 #### Technical plan (Phase B)
 
-**Two layers.** An indicator has (a) a **scoring rule** — a named JsonLogic boolean over the feature dict, the thing with an on/off light and a weight — and (b) optionally a **computed base variable** it introduces (parameterization, e.g. `rsi_10`). Most user-created indicators are layer (a) only: expressions over the *existing* variable set (`RSI < 30`, `macd_hist > 0 AND above_ema50`) — no new computation, just a new row. Layer (b) is the smaller, more advanced case and is called out as a scoped decision below.
+**Decisions locked (review):**
+- **Entity name = `signal_rules`** (not "indicators", which already means the computed technical values / `indicator_snapshots`). A *base indicator* is a feature variable (M18 registry, M22 extends); a *signal* is a named JsonLogic scoring rule over those variables. Parallels M21's `alert_rules`.
+- **Expression is immutable** once a signal is created (freeze-expression, not full immutability). `expression` and `slug` cannot be PATCHed — editing the logic would silently change the meaning of every historical attribution that references the slug, corrupting by-signal edge analysis. To change the logic you clone to a new signal. `name`/`description`/`weight`/`enabled`/`sort_order` stay mutable (weight only affects future scores; per-position normalized score is frozen at entry, so by-signal coherence is preserved). This also closes the "silently re-express a builtin" hole from the M19a review. Residual caveat: coherence is only as strong as the stability of the underlying *variables* (changing how `bb_squeeze` is computed still shifts meaning — a deeper concern).
+- **Dual-write transition.** The 4 legacy boolean columns on `screener_results` feed the API models, the frontend Screener table, the public `/status/summary` endpoint, and reports. Keep populating them (from the builtin results) *and* write a new `signals` jsonb — existing surfaces stay untouched while scoring/reporting go data-driven.
+- **Sliced: M19a (backend) then M19b (frontend).** M19a = `signal_rules` table + data-driven scoring + CRUD API + dynamic `entry_signals`/reports, all backend + tested. M19b = signal management page + the first rule-builder UI + a dynamic Screener display. Everything below is M19a unless marked (M19b).
 
-**Schema — migration `003_indicators.sql`**
-- `indicators` table: `id`, `slug` (unique machine name, e.g. `bb_squeeze`), `name` (display), `description`, `type` (family: `rsi`/`macd`/`bb`/`ema`/`atr`/`obv`/`volume`/`composite`), `expression` (jsonb JsonLogic), `weight` (numeric, default 1), `enabled` (bool), `is_builtin` (bool), `sort_order`, `created_at`, `updated_at`, `deleted_at` (soft delete)
+**Two layers.** A signal has (a) a **scoring rule** — a named JsonLogic boolean over the feature dict, the thing with an on/off light and a weight — and (b) optionally a **computed base variable** it introduces (parameterization, e.g. `rsi_10`). Most user-created signals are layer (a) only: expressions over the *existing* variable set (`RSI < 30`, `macd_hist > 0 AND above_ema50`) — no new computation, just a new row. Layer (b) is the smaller, more advanced case and is called out as a scoped decision below.
+
+**Schema — migration `003_signal_rules.sql`**
+- `signal_rules` table: `id`, `slug` (unique machine name, e.g. `bb_squeeze`), `name` (display), `description`, `type` (family: `rsi`/`macd`/`bb`/`ema`/`atr`/`obv`/`volume`/`composite`), `expression` (jsonb JsonLogic), `weight` (integer, default 1), `enabled` (bool), `is_builtin` (bool), `sort_order`, `created_at`, `updated_at`, `deleted_at` (soft delete)
 - **Seed the 4 hardcoded Pass-2 signals as builtin rows** so scoring becomes data-driven:
   - `bb_squeeze` → `{"var":"bb_squeeze"}`
   - `rsi_in_range` → `{"<=":[35,{"var":"rsi_14"},65]}`
   - `above_ema50` → `{">":[{"var":"close"},{"var":"ema_50"}]}`
   - `volume_expansion` → `{">":[{"var":"vol_3d"},{"var":"vol_20d"}]}`
-- `ALTER screener_results ADD COLUMN signals jsonb` — holds `{slug: bool}` for every evaluated indicator (the fixed `bb_squeeze`/`rsi_in_range`/`above_ema50`/`volume_expansion` columns are left in place for historical rows but no longer written; reads move to `signals`)
+- `ALTER screener_results ADD COLUMN signals jsonb` — holds `{slug: bool}` for every evaluated signal; plus `signal_score_normalized numeric` and `max_signal_score numeric` (see cross-set section). **Dual-write:** the 4 legacy boolean columns keep being written from the corresponding builtin results so the API/frontend/status endpoint are unaffected.
 
 **Screener scoring rewrite (`screener.py`)**
-- `pass2_score` becomes data-driven: load enabled indicators once, `build_feature_contexts(symbols)` (from M18), then per symbol `score = sum(ind.weight * evaluate(ind.expression, features))` and `signals = {ind.slug: result}`
-- `save_results` writes `signals` (jsonb) + `signal_score`; drops the four hardcoded columns from the insert
-- Deleting/disabling an indicator changes future scores only — historical `screener_results` are immutable
+- `pass2_score` becomes data-driven: load enabled signal_rules once, `build_feature_contexts(symbols)` (from M18), then per symbol `score = sum(rule.weight * evaluate(rule.expression, features))` and `signals = {rule.slug: result}`
+- `save_results` writes `signals` (jsonb) + `signal_score` + `signal_score_normalized` + `max_signal_score`, and **dual-writes** the 4 legacy columns from `signals[builtin_slug]` (when those builtins are enabled) for back-compat
+- Deleting/disabling a signal changes future scores only — historical `screener_results` are immutable
 
 **Dynamic entry-signal attribution (`positions.py`)**
 - `snapshot_entry_signals` rewrite: evaluate **all enabled indicators** against the entry feature context → `entry_signals = {ind.slug: bool, …}` + `signal_score`, alongside the raw values it already keeps (`rsi_14`, `macd_hist`, `atr_14`, `bb_width`, emas, `close_at_entry`) and `triggering_alert_types`
@@ -879,14 +890,14 @@ Turn the hardcoded screener signals into user-defined, named indicators built on
 `signal_score_normalized = achieved_weight / total_enabled_weight` — a 0–1 fraction of the maximum score attainable *given the set that was live when the position was opened*. Store it (plus its denominator `max_signal_score`) **frozen** alongside `signal_score` on both `screener_results.signals` and `positions.entry_signals`, so it is never recomputed against a later set. Reports add `performance_by_normalized_score` bucketed into bands (e.g. 0–0.2, 0.2–0.4, …, or quintiles) so "did high-conviction setups outperform?" stays answerable across eras.
 - **What it does and doesn't control for (document it):** normalization corrects for set *size and weight* — a 3-of-4 setup (0.75) and a 6-of-8 setup (0.75) become directly comparable. It does **not** correct for indicator *quality*: diluting the set with a weak indicator still shifts the distribution. It's a strong first-order cross-set metric, not a claim of semantic equivalence. Pairs naturally with per-signal `edge_r`, which remains the tool for judging any individual indicator's worth.
 
-**API + models (`routers/indicators.py`, `models/indicators.py`)** — auth-required
-- `GET /indicators` (filter `enabled`, `include_deleted`) · `GET /indicators/{id}`
-- `POST /indicators` — create; **validates `expression` via `rule_engine.validate` → 422 with errors** on a bad/unknown-variable rule
-- `PATCH /indicators/{id}` — edit name/expression/weight/enabled (re-validates)
-- `DELETE /indicators/{id}` — soft delete (`deleted_at` + `enabled=false`); builtins can be disabled and soft-deleted but the action warns
-- `POST /indicators/{id}/restore`
+**API + models (`routers/signal_rules.py`, `models/signal_rules.py`)** — auth-required, prefix `/signal-rules`
+- `GET /signal-rules` (filter `enabled`, `include_deleted`) · `GET /signal-rules/{id}`
+- `POST /signal-rules` — create; **validates `expression` via `rule_engine.validate` → 422 with errors** on a bad/unknown-variable rule
+- `PATCH /signal-rules/{id}` — edit name/description/weight/enabled/sort_order. `expression` and `slug` are **immutable** (rejected with 422 via `extra="forbid"`) — clone to change the logic
+- `DELETE /signal-rules/{id}` — soft delete (`deleted_at` + `enabled=false`); builtins can be disabled and soft-deleted but the action logs a warning (their legacy dual-written column stops being written)
+- `POST /signal-rules/{id}/restore`
 
-**UI**
+**UI (M19b)**
 - Indicators management surface (own page, or a section on Screener/Settings): list with name, human-formatted expression (`format_human`), weight, and the existing **light on/off toggle**; edit/delete actions
 - **First real rule-builder UI** — the create/edit dialog consumes M18's `GET /rules/variables` (variable picker + tooltips), client-side `formatHuman`, and `POST /rules/preview?symbol=` for a live "does this fire on AAPL right now?" check
 - Note the future redesign to prevent crowding as the set grows (per the brainstorm)

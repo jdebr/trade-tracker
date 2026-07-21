@@ -127,11 +127,55 @@ CREATE TABLE screener_results (
     volume_expansion    boolean,
 
     close_price         numeric(12,4),
+
+    -- M19: data-driven scoring. `signals` is {slug: bool} for every evaluated
+    -- signal rule; the four boolean columns above are dual-written from the
+    -- corresponding builtins for back-compat.
+    signals                 jsonb,
+    signal_score_normalized numeric(6,4),
+    max_signal_score        numeric(8,2),
+
     notes               text
 );
 
 CREATE INDEX screener_run_at_idx ON screener_results(run_at DESC);
 CREATE INDEX screener_symbol_idx  ON screener_results(symbol);
+
+
+-- -----------------------------------------------------------------------------
+-- signal_rules
+-- User-defined, named scoring rules (M19). A "signal" is a JsonLogic boolean
+-- expression (see the rule engine) over the feature dictionary. The four Pass-2
+-- screener signals are seeded as builtins, so scoring is data-driven. Distinct
+-- from "indicators", which compute the underlying technical values.
+-- -----------------------------------------------------------------------------
+CREATE TABLE signal_rules (
+    id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug          text        UNIQUE NOT NULL,
+    name          text        NOT NULL,
+    description   text,
+    type          text,
+    expression    jsonb       NOT NULL,
+    weight        integer     NOT NULL DEFAULT 1 CHECK (weight >= 1),
+    enabled       boolean     NOT NULL DEFAULT true,
+    is_builtin    boolean     NOT NULL DEFAULT false,
+    sort_order    integer     NOT NULL DEFAULT 0,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    deleted_at    timestamptz
+);
+
+CREATE INDEX signal_rules_active_idx ON signal_rules(sort_order) WHERE deleted_at IS NULL;
+
+INSERT INTO signal_rules (slug, name, description, type, expression, weight, is_builtin, sort_order) VALUES
+    ('bb_squeeze',       'BB Squeeze',       'Bollinger Band squeeze is active',        'bb',
+        '{"var":"bb_squeeze"}'::jsonb, 1, true, 1),
+    ('rsi_in_range',     'RSI in range',     'RSI(14) between 35 and 65',               'rsi',
+        '{"<=":[35,{"var":"rsi_14"},65]}'::jsonb, 1, true, 2),
+    ('above_ema50',      'Above EMA 50',     'Close is above the 50-day EMA',           'ema',
+        '{">":[{"var":"close"},{"var":"ema_50"}]}'::jsonb, 1, true, 3),
+    ('volume_expansion', 'Volume expansion', '3-day average volume exceeds 20-day avg', 'volume',
+        '{">":[{"var":"vol_3d"},{"var":"vol_20d"}]}'::jsonb, 1, true, 4);
 
 
 -- -----------------------------------------------------------------------------

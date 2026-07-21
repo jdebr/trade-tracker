@@ -22,7 +22,8 @@ from datetime import date, datetime, timezone
 
 from app.database import get_client
 from app.services.exit_strategy import MarketContext, compute_outcome
-from app.services.screener import RSI_HIGH, RSI_LOW
+from app.services.feature_context import features_from_context
+from app.services import signal_rules as sr
 
 logger = logging.getLogger(__name__)
 
@@ -37,50 +38,38 @@ def snapshot_entry_signals(
     triggering_alerts: list[str] | None = None,
 ) -> dict:
     """
-    Capture the indicator state at the moment of entry.
+    Capture the signal state at the moment of entry.
 
     This is the single most important field for the reporting slice: without it
     there is no way to ask "do BB-squeeze entries actually make money?" after the
     fact, because the indicator values will have moved on by the time the trade
     closes.
 
-    The four boolean flags use the same thresholds as the screener (imported from
-    screener.py rather than restated) so that a position's recorded signals mean
-    exactly what the screener meant when it surfaced the candidate.
+    `entry_signals["signals"]` holds {slug: bool} for *every enabled signal rule*
+    at the time of entry — the full dynamic set, not a frozen four — evaluated by
+    the same M18 engine the screener uses, so a position's recorded signals mean
+    exactly what the screener meant. The nested map keeps user-defined slugs from
+    colliding with the raw-value keys below.
     """
-    rsi        = ctx.indicator("rsi_14")
-    ema_50     = ctx.indicator("ema_50")
-    last_close = ctx.last_close
-
-    bars    = ctx.bars[-20:]
-    vol_3d  = vol_20d = None
-    if bars:
-        volumes = [b["volume"] for b in bars]
-        vol_3d  = sum(volumes[-3:]) / min(3, len(volumes))
-        vol_20d = sum(volumes) / len(volumes)
-
-    bb_squeeze       = bool(ctx.snapshot.get("bb_squeeze")) if ctx.snapshot else False
-    rsi_in_range     = (RSI_LOW <= rsi <= RSI_HIGH) if rsi is not None else False
-    above_ema50      = (last_close > ema_50) if (last_close and ema_50) else False
-    volume_expansion = (vol_3d > vol_20d) if (vol_3d and vol_20d) else False
+    features = features_from_context(ctx)
+    scored = sr.evaluate_signals(features, sr.get_enabled_rules())
 
     return {
-        # The four screener signals — what the reports group by.
-        "bb_squeeze":       bb_squeeze,
-        "rsi_in_range":     rsi_in_range,
-        "above_ema50":      above_ema50,
-        "volume_expansion": volume_expansion,
-        "signal_score":     sum([bb_squeeze, rsi_in_range, above_ema50, volume_expansion]),
+        # The dynamic signal set — what the reports group by.
+        "signals":                 scored["signals"],
+        "signal_score":            scored["signal_score"],
+        "signal_score_normalized": scored["signal_score_normalized"],
+        "max_signal_score":        scored["max_signal_score"],
 
         # Raw values, for finer-grained analysis later.
-        "rsi_14":    rsi,
-        "macd_hist": ctx.indicator("macd_hist"),
-        "atr_14":    ctx.indicator("atr_14"),
-        "bb_width":  ctx.indicator("bb_width"),
-        "ema_8":     ctx.indicator("ema_8"),
-        "ema_21":    ctx.indicator("ema_21"),
-        "ema_50":    ema_50,
-        "close_at_entry": last_close,
+        "rsi_14":    features.get("rsi_14"),
+        "macd_hist": features.get("macd_hist"),
+        "atr_14":    features.get("atr_14"),
+        "bb_width":  features.get("bb_width"),
+        "ema_8":     features.get("ema_8"),
+        "ema_21":    features.get("ema_21"),
+        "ema_50":    features.get("ema_50"),
+        "close_at_entry": features.get("close"),
 
         # Which alert types were live on this symbol when the trade was opened.
         "triggering_alert_types": triggering_alerts or [],

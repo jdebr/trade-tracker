@@ -28,6 +28,8 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from app.database import get_client
+from app.services.feature_context import build_feature_contexts, snapshot_present
+from app.services import signal_rules as sr
 
 logger = logging.getLogger(__name__)
 
@@ -75,32 +77,6 @@ def pass1_filter() -> list[str]:
 # ---------------------------------------------------------------------------
 # Pass 2 helpers
 # ---------------------------------------------------------------------------
-
-def _get_indicators(symbols: list[str]) -> dict[str, dict]:
-    """
-    Return the most-recent indicator snapshot for each symbol as a dict
-    keyed by symbol.  Symbols with no snapshot are omitted.
-    """
-    if not symbols:
-        return {}
-
-    result = (
-        get_client()
-        .table("indicator_snapshots")
-        .select("symbol,date,rsi_14,bb_squeeze,ema_50")
-        .in_("symbol", symbols)
-        .order("date", desc=True)
-        .execute()
-    )
-
-    # Keep only the most-recent row per symbol.
-    snapshots: dict[str, dict] = {}
-    for row in result.data:
-        sym = row["symbol"]
-        if sym not in snapshots:
-            snapshots[sym] = row
-    return snapshots
-
 
 def _get_recent_volumes(symbols: list[str]) -> dict[str, dict]:
     """
@@ -155,51 +131,48 @@ def _get_recent_volumes(symbols: list[str]) -> dict[str, dict]:
 
 def pass2_score(symbols: list[str]) -> list[dict]:
     """
-    Apply signal filters to each symbol and return a list of scored candidate
-    dicts, sorted by signal_score descending.  Symbols with no indicator
-    snapshot are skipped.
+    Score each symbol against the enabled signal rules (data-driven, via the M18
+    engine) and return a list of candidate dicts sorted by signal_score descending.
+    Symbols with no indicator snapshot are skipped.
+
+    Dual-write: the four builtin signals are also surfaced as flat booleans
+    (bb_squeeze / rsi_in_range / above_ema50 / volume_expansion) so the existing
+    API response model and screener_results columns keep working unchanged.
     """
-    indicators = _get_indicators(symbols)
-    vol_data   = _get_recent_volumes(symbols)
+    rules = sr.get_enabled_rules()
+    contexts = build_feature_contexts(symbols)
 
     candidates = []
     skipped_no_snap = 0
     for symbol in symbols:
-        snap = indicators.get(symbol)
-        if not snap:
+        features = contexts.get(symbol) or {}
+        if not snapshot_present(features):
             skipped_no_snap += 1
             logger.debug("%s: no indicator snapshot — skipping Pass 2", symbol)
             continue
 
-        vol = vol_data.get(symbol, {})
-        last_close = vol.get("last_close")
-        ema_50     = snap.get("ema_50")
-        rsi_14     = snap.get("rsi_14")
-        bb_squeeze = snap.get("bb_squeeze")
-
-        # Evaluate each signal
-        sig_bb_squeeze     = bool(bb_squeeze) if bb_squeeze is not None else False
-        sig_rsi_in_range   = (RSI_LOW <= rsi_14 <= RSI_HIGH) if rsi_14 is not None else False
-        sig_above_ema50    = (last_close > ema_50) if (last_close and ema_50) else False
-        sig_vol_expansion  = (vol["vol_3d"] > vol["vol_20d"]) if vol else False
-
-        score = sum([sig_bb_squeeze, sig_rsi_in_range, sig_above_ema50, sig_vol_expansion])
+        res = sr.evaluate_signals(features, rules)
+        signals = res["signals"]
 
         candidates.append({
-            "symbol":           symbol,
-            "signal_score":     score,
-            "bb_squeeze":       sig_bb_squeeze,
-            "rsi_14":           float(rsi_14) if rsi_14 is not None else None,
-            "rsi_in_range":     sig_rsi_in_range,
-            "above_ema50":      sig_above_ema50,
-            "volume_expansion": sig_vol_expansion,
-            "close_price":      last_close,
+            "symbol":                  symbol,
+            "signal_score":            res["signal_score"],
+            "signal_score_normalized": res["signal_score_normalized"],
+            "max_signal_score":        res["max_signal_score"],
+            "signals":                 signals,
+            "rsi_14":                  features.get("rsi_14"),
+            "close_price":             features.get("close"),
+            # Legacy flat booleans (dual-write) for the four builtin signals.
+            "bb_squeeze":              signals.get("bb_squeeze"),
+            "rsi_in_range":            signals.get("rsi_in_range"),
+            "above_ema50":             signals.get("above_ema50"),
+            "volume_expansion":        signals.get("volume_expansion"),
         })
 
+    top_score = max((c["signal_score"] for c in candidates), default=0)
     logger.info(
         "Pass 2 scoring: %d symbols — %d had no snapshot, %d scored (top score: %d)",
-        len(symbols), skipped_no_snap, len(candidates),
-        candidates[0]["signal_score"] if candidates else 0,
+        len(symbols), skipped_no_snap, len(candidates), top_score,
     )
 
     # Rank by score descending, then alphabetically as tiebreaker.
@@ -223,17 +196,22 @@ def save_results(candidates: list[dict], run_at: datetime) -> int:
 
     rows = []
     for c in candidates:
+        signals = c.get("signals") or {}
         rows.append({
-            "run_at":           run_at.isoformat(),
-            "symbol":           c["symbol"],
-            "rank":             c["rank"],
-            "signal_score":     c["signal_score"],
-            "bb_squeeze":       c.get("bb_squeeze"),
-            "rsi_14":           c.get("rsi_14"),
-            "rsi_in_range":     c.get("rsi_in_range"),
-            "above_ema50":      c.get("above_ema50"),
-            "volume_expansion": c.get("volume_expansion"),
-            "close_price":      c.get("close_price"),
+            "run_at":                  run_at.isoformat(),
+            "symbol":                  c["symbol"],
+            "rank":                    c["rank"],
+            "signal_score":            c["signal_score"],
+            "signals":                 signals,
+            "signal_score_normalized": c.get("signal_score_normalized"),
+            "max_signal_score":        c.get("max_signal_score"),
+            "rsi_14":                  c.get("rsi_14"),
+            "close_price":             c.get("close_price"),
+            # Dual-write the four legacy boolean columns from the builtin results.
+            "bb_squeeze":              signals.get("bb_squeeze"),
+            "rsi_in_range":            signals.get("rsi_in_range"),
+            "above_ema50":             signals.get("above_ema50"),
+            "volume_expansion":        signals.get("volume_expansion"),
         })
 
     result = get_client().table("screener_results").insert(rows).execute()

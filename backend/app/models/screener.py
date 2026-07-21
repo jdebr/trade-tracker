@@ -6,13 +6,18 @@ from datetime import datetime
 class ScreenerCandidate(BaseModel):
     symbol: str
     rank: int
-    signal_score: int           # 0–4
+    signal_score: int
     bb_squeeze: Optional[bool] = None
     rsi_14: Optional[float] = None
     rsi_in_range: Optional[bool] = None
     above_ema50: Optional[bool] = None
     volume_expansion: Optional[bool] = None
     close_price: Optional[float] = None
+    # M19: dynamic signal set + cross-set-comparable score (dual-written alongside
+    # the four legacy booleans above).
+    signals: Optional[dict] = None
+    signal_score_normalized: Optional[float] = None
+    max_signal_score: Optional[float] = None
 
 
 class ScreenerRunResponse(BaseModel):
@@ -34,4 +39,7 @@ class ScreenerResultRow(BaseModel):
     above_ema50: Optional[bool] = None
     volume_expansion: Optional[bool] = None
     close_price: Optional[float] = None
+    signals: Optional[dict] = None
+    signal_score_normalized: Optional[float] = None
+    max_signal_score: Optional[float] = None
     notes: Optional[str] = None

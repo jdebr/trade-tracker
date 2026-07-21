@@ -39,9 +39,10 @@ def get_performance(
             "date_from":    date_from.isoformat() if date_from else None,
             "date_to":      date_to.isoformat()   if date_to   else None,
         },
-        "performance":       reports_svc.compute_performance(positions),
-        "by_exit_reason":    reports_svc.performance_by_exit_reason(positions),
-        "by_signal_score":   reports_svc.performance_by_score(positions),
+        "performance":         reports_svc.compute_performance(positions),
+        "by_exit_reason":      reports_svc.performance_by_exit_reason(positions),
+        "by_signal_score":     reports_svc.performance_by_score(positions),
+        "by_normalized_score": reports_svc.performance_by_normalized_score(positions),
     }
 
 

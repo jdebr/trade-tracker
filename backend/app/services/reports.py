@@ -32,12 +32,35 @@ from app.database import get_client
 
 logger = logging.getLogger(__name__)
 
-# The four screener signals recorded on every position at entry.
-SIGNAL_FLAGS = ("bb_squeeze", "rsi_in_range", "above_ema50", "volume_expansion")
-
 # Below this many trades, metrics are noise rather than signal. Surfaced to the
 # UI so it can caveat the numbers rather than presenting them as fact.
 MIN_SAMPLE_SIZE = 20
+
+# Bands of signal_score_normalized (0–1) for cross-set-comparable reporting (M19).
+# The top band's upper bound is >1 so a perfect 1.0 lands in it.
+NORMALIZED_BANDS = ((0.0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 1.0001))
+
+
+def _entry_signal_map(position: dict) -> dict:
+    """The {slug: bool} signal results recorded on a position at entry.
+
+    Positions opened before M19a stored the signal booleans flat at the top level
+    of entry_signals (no nested "signals" key); fall back to those so historical
+    trades still appear in by-signal reporting.
+    """
+    entry = position.get("entry_signals") or {}
+    nested = entry.get("signals")
+    if nested is not None:
+        return nested
+    return {k: v for k, v in entry.items() if isinstance(v, bool)}
+
+
+def _signal_flags(positions: list[dict]) -> list[str]:
+    """The dynamic set of signal slugs seen across the given positions."""
+    flags: set[str] = set()
+    for p in positions:
+        flags.update(k for k, v in _entry_signal_map(p).items() if isinstance(v, bool))
+    return sorted(flags)
 
 
 # ---------------------------------------------------------------------------
@@ -204,9 +227,9 @@ def performance_by_signal(positions: list[dict]) -> list[dict]:
     """
     rows = []
 
-    for flag in SIGNAL_FLAGS:
-        with_flag    = [p for p in positions if (p.get("entry_signals") or {}).get(flag) is True]
-        without_flag = [p for p in positions if (p.get("entry_signals") or {}).get(flag) is False]
+    for flag in _signal_flags(positions):
+        with_flag    = [p for p in positions if _entry_signal_map(p).get(flag) is True]
+        without_flag = [p for p in positions if _entry_signal_map(p).get(flag) is False]
 
         with_perf    = compute_performance(with_flag)
         without_perf = compute_performance(without_flag)
@@ -247,19 +270,25 @@ def performance_by_signal(positions: list[dict]) -> list[dict]:
 
 def performance_by_score(positions: list[dict]) -> list[dict]:
     """
-    Performance grouped by the 0–4 signal score the screener assigned at entry.
+    Performance grouped by the raw signal score assigned at entry.
 
     If the scoring model works, average R should climb with the score. If it
-    doesn't, the score is not measuring what we hoped.
+    doesn't, the score is not measuring what we hoped. Buckets are the distinct
+    scores actually present — the max is no longer fixed at 4 now that the signal
+    set is user-defined. Raw-score buckets are only comparable within a stable
+    signal set; see performance_by_normalized_score for the cross-set view.
     """
+    scores = sorted({
+        (p.get("entry_signals") or {}).get("signal_score")
+        for p in positions
+        if (p.get("entry_signals") or {}).get("signal_score") is not None
+    })
     rows = []
-    for score in range(5):
+    for score in scores:
         group = [
             p for p in positions
             if (p.get("entry_signals") or {}).get("signal_score") == score
         ]
-        if not group:
-            continue
         perf = compute_performance(group)
         rows.append({
             "signal_score": score,
@@ -267,6 +296,33 @@ def performance_by_score(positions: list[dict]) -> list[dict]:
             "win_rate":     perf["win_rate"],
             "avg_r":        perf["avg_r"],
             "total_r":      perf["total_r"],
+        })
+    return rows
+
+
+def performance_by_normalized_score(positions: list[dict]) -> list[dict]:
+    """
+    Performance grouped into bands of signal_score_normalized (0–1), the
+    conviction measure that stays comparable as the signal set evolves (unlike the
+    raw score, whose maximum shifts when signals are added or removed).
+    """
+    def norm(p):
+        return (p.get("entry_signals") or {}).get("signal_score_normalized")
+
+    rows = []
+    for lo, hi in NORMALIZED_BANDS:
+        group = [p for p in positions if norm(p) is not None and lo <= norm(p) < hi]
+        if not group:
+            continue
+        perf = compute_performance(group)
+        rows.append({
+            "band":     f"{lo:.1f}–{min(hi, 1.0):.1f}",
+            "min":      lo,
+            "max":      min(hi, 1.0),
+            "trades":   perf["total_trades"],
+            "win_rate": perf["win_rate"],
+            "avg_r":    perf["avg_r"],
+            "total_r":  perf["total_r"],
         })
     return rows
 

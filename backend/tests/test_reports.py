@@ -22,12 +22,18 @@ from app.services.reports import (
     compute_performance,
     equity_curve,
     performance_by_exit_reason,
+    performance_by_normalized_score,
     performance_by_score,
     performance_by_signal,
 )
 
 
 def _pos(pnl, r, signals=None, exit_reason="manual", exit_date="2026-07-01", hold_days=5):
+    # Boolean signal flags live under entry_signals["signals"] (the dynamic set);
+    # scalar keys like signal_score / signal_score_normalized stay top-level.
+    signals = signals or {}
+    flags   = {k: v for k, v in signals.items() if isinstance(v, bool)}
+    scalars = {k: v for k, v in signals.items() if not isinstance(v, bool)}
     return {
         "symbol":        "TEST",
         "pnl":           pnl,
@@ -35,7 +41,7 @@ def _pos(pnl, r, signals=None, exit_reason="manual", exit_date="2026-07-01", hol
         "hold_days":     hold_days,
         "exit_reason":   exit_reason,
         "exit_date":     exit_date,
-        "entry_signals": signals or {},
+        "entry_signals": {"signals": flags, **scalars},
     }
 
 
@@ -286,3 +292,50 @@ def test_equity_curve_accumulates_r_and_pnl_in_order():
 
 def test_equity_curve_of_no_trades_is_empty():
     assert equity_curve([]) == []
+
+
+# ---------------------------------------------------------------------------
+# M19: dynamic signals + normalized-score reporting
+# ---------------------------------------------------------------------------
+
+def test_by_signal_handles_a_user_defined_slug():
+    # Signals are no longer a fixed four — a custom slug must be reported too.
+    trades = [
+        _pos(100, 1.0, {"my_signal": True}),
+        _pos(-50, -0.5, {"my_signal": False}),
+    ]
+    slugs = {r["signal"] for r in performance_by_signal(trades)}
+    assert "my_signal" in slugs
+
+
+def test_by_normalized_score_buckets_by_band():
+    trades = [
+        _pos(100, 1.0,  {"signal_score_normalized": 0.9}),
+        _pos(200, 2.0,  {"signal_score_normalized": 0.85}),
+        _pos(-50, -0.5, {"signal_score_normalized": 0.1}),
+        _pos(300, 3.0,  {"signal_score_normalized": 1.0}),   # perfect lands in the top band
+    ]
+    bands = {r["band"]: r for r in performance_by_normalized_score(trades)}
+    assert bands["0.8–1.0"]["trades"] == 3
+    assert bands["0.0–0.2"]["trades"] == 1
+
+
+def test_by_normalized_score_ignores_positions_without_a_normalized_score():
+    assert performance_by_normalized_score([_pos(100, 1.0, {"bb_squeeze": True})]) == []
+
+
+def test_by_signal_reads_legacy_flat_entry_signals():
+    # A position opened before M19a stored signal bools flat (no nested "signals").
+    def _legacy(pnl, r, flat_signals):
+        return {
+            "symbol": "OLD", "pnl": pnl, "r_multiple": r, "hold_days": 5,
+            "exit_reason": "manual", "exit_date": "2026-07-01",
+            "entry_signals": flat_signals,
+        }
+    trades = [
+        _legacy(100, 1.0, {"bb_squeeze": True, "signal_score": 1}),
+        _legacy(-50, -0.5, {"bb_squeeze": False, "signal_score": 0}),
+    ]
+    squeeze = next(r for r in performance_by_signal(trades) if r["signal"] == "bb_squeeze")
+    assert squeeze["with_signal"]["trades"] == 1
+    assert squeeze["without_signal"]["trades"] == 1

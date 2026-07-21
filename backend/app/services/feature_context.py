@@ -97,13 +97,19 @@ def _coerce(name: str, value):
 
 
 def _assemble(snapshot: dict, bars: list[dict]) -> dict:
-    """Build the flat variable dict from one snapshot row + OHLCV bars (oldest→newest)."""
+    """Build the flat variable dict from one snapshot row + OHLCV bars (oldest→newest).
+
+    Volume averages always use the trailing `_VOL_WINDOW` bars regardless of how many
+    are supplied — callers may pass more (e.g. the 60 bars a MarketContext loads), and
+    vol_20d must remain a 20-day average to match the screener.
+    """
     ctx = {name: _coerce(name, snapshot.get(name)) for name in _SNAPSHOT_FIELDS}
 
     close = float(bars[-1]["close"]) if bars else None
+    window = bars[-_VOL_WINDOW:]
     vol_3d = vol_20d = None
-    if bars:
-        vols = [b["volume"] for b in bars]
+    if window:
+        vols = [b["volume"] for b in window]
         vol_3d = sum(vols[-3:]) / min(3, len(vols))
         vol_20d = sum(vols) / len(vols)
 
@@ -120,6 +126,19 @@ def build_feature_context(symbol: str) -> dict:
     snapshot = snaps[0] if snaps else {}
     bars = get_cached_bars(sym, limit=_VOL_WINDOW)
     return _assemble(snapshot, bars)
+
+
+def features_from_context(ctx) -> dict:
+    """
+    Build the feature dict from an already-loaded MarketContext (exit_strategy),
+    reusing its snapshot + bars instead of re-querying — used at position entry.
+    """
+    return _assemble(ctx.snapshot or {}, ctx.bars or [])
+
+
+def snapshot_present(features: dict) -> bool:
+    """True if the feature dict came from a real indicator snapshot (not all-None)."""
+    return any(features.get(name) is not None for name in _SNAPSHOT_FIELDS)
 
 
 def _recent_bars_by_symbol(symbols: list[str]) -> dict[str, list[dict]]:

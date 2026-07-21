@@ -90,6 +90,15 @@ def test_short_history_still_averages_available_bars():
     assert ctx["vol_3d"] == 1_500.0           # min(3, 2) -> mean of both
 
 
+def test_volume_window_caps_at_20_bars_even_when_more_supplied():
+    # MarketContext loads 60 bars; vol_20d must still be a 20-day average, not
+    # diluted by the older 40 bars. Newest 20 bars all have volume 5000.
+    bars = [{"close": 100.0 + i, "volume": 1_000 if i < 40 else 5_000} for i in range(60)]
+    ctx = _assemble(FULL_SNAPSHOT, bars)
+    assert ctx["close"] == 159.0        # newest bar (100 + 59)
+    assert ctx["vol_20d"] == 5_000.0    # last 20 only, not averaged with the 1_000s
+
+
 # ---------------------------------------------------------------------------
 # build_feature_context (single + batched)
 # ---------------------------------------------------------------------------
