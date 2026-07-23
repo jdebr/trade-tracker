@@ -837,7 +837,7 @@ A single, reusable boolean-expression engine that both custom indicators (M19) a
 
 Turn the hardcoded screener signals into user-defined, named indicators built on the M18 engine, and let new indicators flow automatically into scoring and position tracking.
 
-**Status: M19a (backend) complete** — `signal_rules` table + service + CRUD API, data-driven screener scoring (dual-write), dynamic `entry_signals`, `signal_score_normalized`, reports generalized; 321 tests green; two adversarial reviews passed; expression immutability locked in. **Pending:** migration 003 applied to the live DB, then commit. **M19b (frontend) not started** — signal management page, the first rule-builder UI, and a dynamic Screener display.
+**Status: M19a (backend) complete + deployed** — `signal_rules` table + service + CRUD API, data-driven screener scoring (dual-write), dynamic `entry_signals`, `signal_score_normalized`, reports generalized; 321 tests green; two adversarial reviews passed; expression immutability locked in. Migration 003 applied to the live DB; committed (38b1548) and deployed to Render (live OpenAPI confirms `/signal-rules` + `/rules` routes). **M19b (frontend) in progress** — signal management page, the rule-builder UI, and a dynamic Screener display. Sub-slicing + locked decisions below.
 
 **Scope**
 - [ ] `indicators` table: `name`, `slug`, `type` (one of the current indicator families), `expression` (jsonb JsonLogic), `enabled`, `is_builtin`, `weight`, `deleted_at` (soft delete), timestamps
@@ -896,11 +896,23 @@ Turn the hardcoded screener signals into user-defined, named indicators built on
 - `PATCH /signal-rules/{id}` — edit name/description/weight/enabled/sort_order. `expression` and `slug` are **immutable** (rejected with 422 via `extra="forbid"`) — clone to change the logic
 - `DELETE /signal-rules/{id}` — soft delete (`deleted_at` + `enabled=false`); builtins can be disabled and soft-deleted but the action logs a warning (their legacy dual-written column stops being written)
 - `POST /signal-rules/{id}/restore`
+- **New for M19b — `POST /rules/preview-universe`** (on the `/rules` router, not `/signal-rules`): body `{rule}`; runs the candidate rule against the **current cached data** for the full Pass-1 universe and returns `{matched: [...], match_count, universe_count, values: {sym: {var: val}}}`. Reuses `pass1_filter()` + `build_feature_contexts()` + `evaluate()` verbatim (no external fetch, no indicator recompute — the same cheap cache reads a real run does), so the preview universe/values are identical to what an actual run would score. Validates first (422 on bad rule). Semantics: evaluates the rule **in isolation** ("which tickers does this fire on"), not "how would ranking change if added to the set"; universe = Pass-1 survivors (liquid, in-band, non-ETF). Label results "against latest cached data (refreshed <date>)". It's a **button**, not live-on-keystroke, since it touches ~380 symbols per call (still seconds). Optional future memoization of the full-universe context with a short TTL if repeated previews feel slow.
 
-**UI (M19b)**
-- Indicators management surface (own page, or a section on Screener/Settings): list with name, human-formatted expression (`format_human`), weight, and the existing **light on/off toggle**; edit/delete actions
-- **First real rule-builder UI** — the create/edit dialog consumes M18's `GET /rules/variables` (variable picker + tooltips), client-side `formatHuman`, and `POST /rules/preview?symbol=` for a live "does this fire on AAPL right now?" check
-- Note the future redesign to prevent crowding as the set grows (per the brainstorm)
+**UI (M19b) — locked decisions**
+- **Own page in nav** (`/signals` route + Sidebar entry, `primary:false` so it stays off the crowded bottom bar). Management list: name, human-formatted expression (from the server `formatted` string), weight, the **light on/off toggle**, and edit/clone/delete actions. Active shown by default; a "Show removed" toggle reveals soft-deleted rows with **Restore** (`include_deleted`).
+- **Two-stage builder.** Stage 1: **raw-JSON textarea + live validate** (`POST /rules/validate` → `formatted` + errors) and single-symbol live preview (`POST /rules/preview?symbol=`) — functional, ships first. Stage 2: **structured condition builder** (`[variable ▾][operator ▾][value]` rows combined with AND/OR, variable picker from `GET /rules/variables` with tooltips; single-level groups in v1, nested deferred) — becomes the **default**, with a "raw JSON" **escape hatch** button that opens Stage 1. Both modes share the same validate/preview/CRUD endpoints. No client-side `formatHuman` needed — the server returns `formatted` on every validate/preview.
+- **Full-universe preview** button (calls `POST /rules/preview-universe`) in the builder: "Matches N of M tickers" + expandable list with each match's rule-relevant values.
+- **Preview symbol picker** — searchable `Combobox` with free/direct input, seeded from the ticker list, defaulting to the first watchlist symbol (fallback `AAPL`), remembered across opens.
+- **Immutability UX.** Editing an existing signal only exposes name/description/weight/enabled/sort_order; the expression rows are **read-only**. A prominent **Clone** action opens the *create* dialog pre-filled with the expression — the escape valve that makes freeze-expression livable.
+- **Adding/enabling a signal affects future runs only** (historical `screener_results` immutable, each row carries its own `max_signal_score`). The page shows a hint pointing at the Screener's existing "Screen Tickers" button.
+- **Builtin edits** allowed like any signal; disable/delete surfaces a warning that the legacy dual-written Screener column stops updating; delete goes through a confirm dialog.
+- **Dynamic Screener display** — drive columns/score off `row.signals` / `row.max_signal_score` / `row.signal_score_normalized`: score badge reads `achieved/max` + normalized %, per-signal dots render for whatever signals exist (wrap/scroll, expand-on-click for large sets). Rows with `signals = null` (pre-migration) fall back to the legacy four booleans + `/4`.
+- Note the future redesign to prevent crowding as the set grows (per the brainstorm).
+
+**Sub-slices (each independently shippable + `bash test.sh`-green)**
+- **M19b.1 — Dynamic Screener display.** Pure frontend over fields the backend already returns; rewrites the hardcoded `SIGNALS`/`ScoreBadge` in `ScreenerPage.jsx` with the legacy fallback. Updates `screener.test.jsx`.
+- **M19b.2 — Signals page + functional builder.** `/signals` page + nav entry; list with light toggle / weight / formatted expression / edit-clone-delete-restore; raw-JSON create/edit dialog with live validate + single-symbol preview; `POST /rules/preview-universe` endpoint + button. Core working milestone.
+- **M19b.3 — Structured condition builder.** The `[variable][operator][value]` + AND/OR UI; becomes default with the JSON escape hatch.
 
 **Parameterization — scoped decision (layer b).** Supporting a genuinely new base series (`rsi_10`, `ema_100`) means computing and storing a new variable, not just a new expression. Proposed mechanism: an `ALTER indicator_snapshots ADD COLUMN extra jsonb`, plus a small `base_config` (type + params) that the indicator engine reads to compute extra series via `pandas-ta` and merge into the feature dict + `VARIABLE_REGISTRY` dynamically — no per-indicator migration. **Recommendation:** ship M19 v1 with expression indicators over the existing variable set (covers the bulk of the ask), and fast-follow parameterization as M19.2 using the `extra` jsonb approach.
 
@@ -910,10 +922,17 @@ Turn the hardcoded screener signals into user-defined, named indicators built on
 - `snapshot_entry_signals` produces the dynamic map; `reports` by-signal/by-score over a dynamic slug set
 - Migration seed correctness (4 builtins evaluate identically to today)
 
-**Open decisions**
-- **Parameterization in M19 v1 or defer to M19.2?** (Rec: defer; ship expression-over-existing-vars first.)
-- **Weights:** integer-only in v1 (keeps `signal_score` an integer and `by-score` buckets clean), or allow fractional weights now? (Rec: integer in v1.)
-- **Builtin deletion:** allow soft-deleting the 4 seeded builtins, or disable-only? (Rec: allow soft delete with a warning — nothing is special about them once scoring is data-driven.)
+**Open decisions — resolved**
+- **Parameterization (layer b, `rsi_10`):** deferred to M19.2 (`indicator_snapshots.extra` jsonb approach). M19b v1 = expressions over the existing 17-variable registry.
+- **Weights:** integer-only in v1 (keeps `signal_score` an integer and `by-score` buckets clean).
+- **Builtin deletion:** allowed via soft delete with a warning (their legacy dual-written column stops updating); nothing special about them once scoring is data-driven.
+- **Builder fidelity:** two-stage — raw-JSON-live-validate first, then structured builder as default with a JSON escape hatch (see UI decisions above).
+- **Management surface:** own `/signals` page in nav.
+- **Screener display:** dynamic — score `achieved/max` + normalized %, dots-on-demand (see UI decisions above).
+
+**Deferred / future (post-M19b)**
+- **Configurable Pass 1.** The Pass-1 gate (`MIN_AVG_VOLUME`, `MIN_PRICE`/`MAX_PRICE`, `is_etf`) is currently hardcoded in `screener.py`. Make it user-configurable (likely `app_settings` columns or a small `screener_config` row) so the tradeable universe isn't fixed. Touches `pass1_filter()` and, by extension, the universe that `/rules/preview-universe` reports against. Independent quick win; no dependency on the M19b slices.
+- **Full-universe preview memoization** — cache `build_feature_contexts(pass1_survivors)` with a short TTL if repeated previews feel slow (skip until measured).
 
 ---
 

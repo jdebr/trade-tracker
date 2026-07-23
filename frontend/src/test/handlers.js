@@ -34,6 +34,16 @@ export const MOCK_RUN_RESPONSE = {
   candidates: MOCK_SCREENER_RESULTS,
 }
 
+// The four seeded builtins plus one custom signal, as GET /signal-rules returns
+// them. Drives dynamic labels/ordering on the Screener.
+export const MOCK_SIGNAL_RULES = [
+  { id: "sr-1", slug: "bb_squeeze",       name: "BB Squeeze",       description: "Bollinger Band squeeze is active",        type: "bb",     expression: { var: "bb_squeeze" }, weight: 1, enabled: true, is_builtin: true,  sort_order: 1, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-2", slug: "rsi_in_range",     name: "RSI in range",     description: "RSI(14) between 35 and 65",                 type: "rsi",    expression: { "<=": [35, { var: "rsi_14" }, 65] }, weight: 1, enabled: true, is_builtin: true, sort_order: 2, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-3", slug: "above_ema50",      name: "Above EMA 50",     description: "Close is above the 50-day EMA",             type: "ema",    expression: { ">": [{ var: "close" }, { var: "ema_50" }] }, weight: 1, enabled: true, is_builtin: true, sort_order: 3, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-4", slug: "volume_expansion", name: "Volume expansion", description: "3-day average volume exceeds 20-day avg",   type: "volume", expression: { ">": [{ var: "vol_3d" }, { var: "vol_20d" }] }, weight: 1, enabled: true, is_builtin: true, sort_order: 4, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-5", slug: "momentum_pop",     name: "Momentum Pop",     description: "MACD histogram turned positive",            type: "macd",   expression: { ">": [{ var: "macd_hist" }, 0] }, weight: 2, enabled: true, is_builtin: false, sort_order: 5, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+]
+
 export const MOCK_ALERTS = [
   {
     id: "alert-1", symbol: "AAPL", date: "2026-03-28",
@@ -302,6 +312,10 @@ export const handlers = [
 
   http.get(`${API_URL}/screener/results`, () =>
     HttpResponse.json(MOCK_SCREENER_RESULTS)
+  ),
+
+  http.get(`${API_URL}/signal-rules`, () =>
+    HttpResponse.json(MOCK_SIGNAL_RULES)
   ),
 
   // Screener run: POST returns job_id, GET /job/:id returns done immediately

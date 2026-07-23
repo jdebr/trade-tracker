@@ -14,12 +14,31 @@ import { cn } from "@/lib/utils"
 // Helpers
 // ---------------------------------------------------------------------------
 
-function ScoreBadge({ score }) {
-  const variant = score >= 3 ? "bull" : score >= 1 ? "secondary" : "neutral"
+function ScoreBadge({ score, max, normalized }) {
+  // Colour by the normalized fraction so the badge stays meaningful as the signal
+  // set (and therefore `max`) grows across screener eras.
+  const frac = normalized != null ? normalized : max ? score / max : 0
+  const variant = frac >= 0.6 ? "bull" : frac > 0 ? "secondary" : "neutral"
   return (
-    <Badge variant={variant} aria-label={`Signal score ${score}`}>
-      {score}/4
+    <Badge variant={variant} aria-label={`Signal score ${score} of ${max}`}>
+      {score}/{max}
     </Badge>
+  )
+}
+
+// A compact "3/4 · 75%" score cell: raw achieved/max plus the cross-era normalized
+// percentage when the row carries one.
+function ScoreCell({ row }) {
+  const norm = row.signal_score_normalized
+  return (
+    <div className="flex items-center gap-1.5">
+      <ScoreBadge score={row.signal_score} max={rowMaxScore(row)} normalized={norm} />
+      {norm != null && (
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {Math.round(norm * 100)}%
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -69,28 +88,72 @@ function ResultsSkeleton() {
 // Results table (desktop)
 // ---------------------------------------------------------------------------
 
-const SIGNALS = [
-  {
-    key: "bb_squeeze",
+// Curated labels + tooltips for the four builtin signals so they keep concise,
+// polished names in the table regardless of what the signal-rules metadata says.
+// Custom signals fall back to their rule name, then a prettified slug.
+const LEGACY_SIGNAL_META = {
+  bb_squeeze: {
     label: "BB Squeeze",
     tooltip: `${INDICATORS.bb_squeeze.description} ${INDICATORS.bb_squeeze.interpretation}`,
   },
-  {
-    key: "rsi_in_range",
+  rsi_in_range: {
     label: "RSI Range",
     tooltip: "RSI between 35 and 65 — neutral momentum zone, avoiding overbought/oversold extremes.",
   },
-  {
-    key: "above_ema50",
+  above_ema50: {
     label: "Above EMA50",
     tooltip: `${INDICATORS.ema_50.description} ${INDICATORS.ema_50.interpretation}`,
   },
-  {
-    key: "volume_expansion",
+  volume_expansion: {
     label: "Vol Expand",
     tooltip: "3-day average volume > 1.5× the 20-day average — indicates unusual volume expansion.",
   },
-]
+}
+
+// The four legacy builtins, used to reconstruct a signal map for rows written
+// before M19 (those carry only the four boolean columns, not a `signals` jsonb).
+const LEGACY_SLUGS = ["bb_squeeze", "rsi_in_range", "above_ema50", "volume_expansion"]
+
+function prettifySlug(slug) {
+  return slug.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
+}
+
+// The {slug: bool} signal map for a row — prefer the dynamic `signals` jsonb, and
+// fall back to the four legacy boolean columns for pre-M19 rows.
+function rowSignals(row) {
+  if (row.signals && Object.keys(row.signals).length > 0) return row.signals
+  const legacy = {}
+  for (const slug of LEGACY_SLUGS) {
+    if (row[slug] != null) legacy[slug] = row[slug]
+  }
+  return legacy
+}
+
+// Max attainable score for the row's era; pre-M19 rows scored out of 4.
+function rowMaxScore(row) {
+  return row.max_signal_score != null ? Number(row.max_signal_score) : 4
+}
+
+// Wrapped, labeled signal dots for one row — the "dots on demand" cell that scales
+// to any number of signals. Shared by the desktop table and the mobile cards.
+function SignalCellDots({ row, signalCols }) {
+  const rs = rowSignals(row)
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1">
+      {signalCols.map(({ slug, label, tooltip }) =>
+        tooltip ? (
+          <Tooltip key={slug} content={tooltip}>
+            <span className="cursor-help">
+              <SignalDot value={!!rs[slug]} label={label} />
+            </span>
+          </Tooltip>
+        ) : (
+          <SignalDot key={slug} value={!!rs[slug]} label={label} />
+        )
+      )}
+    </div>
+  )
+}
 
 function AddWatchlistButton({ symbol, watchlistSet, onAdd, isPending }) {
   const inWatchlist = watchlistSet.has(symbol)
@@ -150,7 +213,7 @@ function PlanTradeButton({ row, name, onPlan }) {
   )
 }
 
-function ResultsTable({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchlist, addingSymbol, onPlan }) {
+function ResultsTable({ rows, signalCols, nameMap, watchlistSet, openSymbols, onAddToWatchlist, addingSymbol, onPlan }) {
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-border mt-4">
       <table className="w-full text-sm">
@@ -160,11 +223,7 @@ function ResultsTable({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchli
             <th className="px-4 py-3 text-left font-medium">Symbol</th>
             <th className="px-4 py-3 text-left font-medium">Score</th>
             <th className="px-4 py-3 text-left font-medium">Close</th>
-            {SIGNALS.map(({ key, label, tooltip }) => (
-              <Tooltip key={key} content={tooltip}>
-                <th className="px-4 py-3 text-left font-medium cursor-help">{label}</th>
-              </Tooltip>
-            ))}
+            <th className="px-4 py-3 text-left font-medium">Signals</th>
             <th className="px-4 py-3 text-center font-medium w-24"></th>
           </tr>
         </thead>
@@ -181,15 +240,13 @@ function ResultsTable({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchli
                 </Tooltip>
                 {openSymbols.has(row.symbol) && <OpenPositionBadge />}
               </td>
-              <td className="px-4 py-3"><ScoreBadge score={row.signal_score} /></td>
+              <td className="px-4 py-3"><ScoreCell row={row} /></td>
               <td className="px-4 py-3 tabular-nums">
                 {row.close_price != null ? `$${Number(row.close_price).toFixed(2)}` : "—"}
               </td>
-              {SIGNALS.map(({ key }) => (
-                <td key={key} className="px-4 py-3">
-                  <SignalDot value={row[key]} label="" />
-                </td>
-              ))}
+              <td className="px-4 py-3">
+                <SignalCellDots row={row} signalCols={signalCols} />
+              </td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-center gap-1.5">
                   <PlanTradeButton row={row} name={nameMap.get(row.symbol)} onPlan={onPlan} />
@@ -213,7 +270,7 @@ function ResultsTable({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchli
 // Results card list (mobile)
 // ---------------------------------------------------------------------------
 
-function ResultsCards({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchlist, addingSymbol, onPlan }) {
+function ResultsCards({ rows, signalCols, nameMap, watchlistSet, openSymbols, onAddToWatchlist, addingSymbol, onPlan }) {
   return (
     <div className="md:hidden space-y-3 mt-4">
       {rows.map((row) => (
@@ -235,7 +292,7 @@ function ResultsCards({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchli
                   ${Number(row.close_price).toFixed(2)}
                 </span>
               )}
-              <ScoreBadge score={row.signal_score} />
+              <ScoreCell row={row} />
               <PlanTradeButton row={row} name={nameMap.get(row.symbol)} onPlan={onPlan} />
               <AddWatchlistButton
                 symbol={row.symbol}
@@ -245,11 +302,7 @@ function ResultsCards({ rows, nameMap, watchlistSet, openSymbols, onAddToWatchli
               />
             </div>
           </div>
-          <div className="flex flex-wrap gap-3">
-            {SIGNALS.map(({ key, label }) => (
-              <SignalDot key={key} value={row[key]} label={label} />
-            ))}
-          </div>
+          <SignalCellDots row={row} signalCols={signalCols} />
         </div>
       ))}
     </div>
@@ -411,12 +464,45 @@ export default function ScreenerPage() {
     },
   })
 
+  // ---- Signal metadata (labels + ordering for the dynamic signal set) ----
+  // include_deleted so signals disabled/removed after a run still resolve to a
+  // proper name in that run's results.
+  const { data: signalRules = [] } = useQuery({
+    queryKey: ["signal-rules", "all"],
+    queryFn: () => api.get("/signal-rules?include_deleted=true"),
+    staleTime: 5 * 60 * 1000,
+  })
+  const signalMeta = useMemo(() => {
+    const m = new Map()
+    for (const r of signalRules) {
+      m.set(r.slug, { name: r.name, description: r.description, order: r.sort_order ?? 999 })
+    }
+    return m
+  }, [signalRules])
+
   // ---- Existing results ----
   const { data: results, isLoading, isError } = useQuery({
     queryKey: ["screener-results"],
     queryFn: () => api.get("/screener/results"),
     retry: false,
   })
+
+  // ---- Dynamic signal columns: the union of signals present across the run,
+  // ordered by the rules' sort_order, with resolved labels + tooltips. ----
+  const signalCols = useMemo(() => {
+    const present = new Set()
+    for (const row of results ?? []) {
+      for (const slug of Object.keys(rowSignals(row))) present.add(slug)
+    }
+    const order = (slug) => signalMeta.get(slug)?.order ?? 999
+    return [...present]
+      .sort((a, b) => order(a) - order(b) || a.localeCompare(b))
+      .map((slug) => ({
+        slug,
+        label: LEGACY_SIGNAL_META[slug]?.label ?? signalMeta.get(slug)?.name ?? prettifySlug(slug),
+        tooltip: LEGACY_SIGNAL_META[slug]?.tooltip ?? signalMeta.get(slug)?.description ?? undefined,
+      }))
+  }, [results, signalMeta])
 
   // ---- Trigger screener run ----
   const { mutate: startScreen, isPending: isStartingScreen } = useMutation({
@@ -609,6 +695,7 @@ export default function ScreenerPage() {
         <>
           <ResultsTable
             rows={results}
+            signalCols={signalCols}
             nameMap={nameMap}
             watchlistSet={watchlistSet}
             openSymbols={openSymbols}
@@ -618,6 +705,7 @@ export default function ScreenerPage() {
           />
           <ResultsCards
             rows={results}
+            signalCols={signalCols}
             nameMap={nameMap}
             watchlistSet={watchlistSet}
             openSymbols={openSymbols}

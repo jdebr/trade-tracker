@@ -3,8 +3,11 @@
  *
  * Criteria:
  * 1.  Results table renders rows from GET /screener/results
- * 2.  Score badge renders correct value per row
+ * 2.  Score badge renders correct value per row (legacy rows score out of 4)
  * 3.  Signal indicators render correctly
+ * 3a. Dynamic signals: custom signal label + per-era max score render from the
+ *     `signals` map / `max_signal_score`
+ * 3b. Normalized score percentage renders when present
  * 4.  Loading skeleton shown while initial results fetch is in flight
  * 5.  Empty state shown when no results exist (results auto-run on Saturday)
  * 6.  Last run timestamp shown in header when results exist
@@ -65,12 +68,54 @@ it("renders correct score badge for each row", async () => {
   }
 })
 
-// 3. Signal dots have correct aria-labels
+// 3. Signal dots have correct aria-labels (legacy fallback path: rows carry the
+//    four boolean columns, no `signals` map)
 it("renders signal indicators for the top result", async () => {
   renderScreener()
   await waitFor(() => screen.getAllByRole("row"))
   expect(screen.getAllByLabelText(/bb squeeze true/i).length).toBeGreaterThan(0)
   expect(screen.getAllByLabelText(/rsi range true/i).length).toBeGreaterThan(0)
+})
+
+// 3a. Dynamic signal set: a row with a `signals` map + a custom signal + a
+//     per-era `max_signal_score` renders the custom label and X/max score.
+it("renders custom signals and a dynamic max score from the signals map", async () => {
+  server.use(
+    http.get("http://localhost:8000/screener/results", () =>
+      HttpResponse.json([
+        {
+          id: "r1", symbol: "AMD", rank: 1, run_at: "2026-03-28T20:00:00Z",
+          signal_score: 3, max_signal_score: 5, signal_score_normalized: 0.6,
+          close_price: 150.0,
+          signals: { bb_squeeze: false, rsi_in_range: true, momentum_pop: true },
+        },
+      ])
+    )
+  )
+  renderScreener()
+  // Custom signal resolves its display name from GET /signal-rules.
+  await waitFor(() =>
+    expect(screen.getAllByLabelText(/momentum pop true/i).length).toBeGreaterThan(0)
+  )
+  // Score is out of the row's own max (5), not the legacy 4.
+  expect(screen.getAllByText("3/5").length).toBeGreaterThan(0)
+})
+
+// 3b. Normalized score percentage renders alongside the score badge.
+it("renders the normalized score percentage when present", async () => {
+  server.use(
+    http.get("http://localhost:8000/screener/results", () =>
+      HttpResponse.json([
+        {
+          id: "r1", symbol: "AMD", rank: 1, run_at: "2026-03-28T20:00:00Z",
+          signal_score: 3, max_signal_score: 5, signal_score_normalized: 0.6,
+          close_price: 150.0, signals: { rsi_in_range: true, momentum_pop: true },
+        },
+      ])
+    )
+  )
+  renderScreener()
+  await waitFor(() => expect(screen.getAllByText("60%").length).toBeGreaterThan(0))
 })
 
 // 4. Loading skeleton
