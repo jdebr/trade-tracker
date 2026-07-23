@@ -8,9 +8,12 @@
  * 4. Toggling the light calls PATCH /signal-rules/:id with the flipped enabled
  * 5. "New signal" opens the builder dialog
  * 6. Create button is disabled until name + a valid expression are present
- * 7. A valid expression shows "Valid" and enables Create; saving calls POST
+ * 7. A valid JSON expression shows "Valid" and enables Create; saving calls POST
  * 8. Removing a signal opens a confirm dialog, then calls DELETE on confirm
  * 9. Builtin delete confirmation warns about the legacy Screener column
+ * 10. New signal opens in the visual builder by default
+ * 11. Building a condition in the builder saves the right JsonLogic
+ * 12. Switching to JSON shows the builder's expression as text
  */
 
 import { it, expect, vi } from "vitest"
@@ -105,7 +108,9 @@ it("enables Create when the expression validates and saves via POST", async () =
   fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
 
   fireEvent.change(await screen.findByLabelText(/signal name/i), { target: { value: "Strong oversold" } })
-  fireEvent.change(screen.getByLabelText(/expression json/i), {
+  // Drop to the raw-JSON escape hatch and type the expression.
+  fireEvent.click(screen.getByRole("button", { name: /^json$/i }))
+  fireEvent.change(await screen.findByLabelText(/expression json/i), {
     target: { value: '{"<": [{"var": "rsi_14"}, 30]}' },
   })
 
@@ -142,4 +147,51 @@ it("warns about the legacy Screener column when removing a builtin", async () =>
   await waitFor(() => screen.getByText("Momentum Pop"))
   fireEvent.click(screen.getByRole("button", { name: /remove bb squeeze/i }))
   expect(await screen.findByText(/legacy column/i)).toBeInTheDocument()
+})
+
+// 10. New signal defaults to the visual builder
+it("opens a new signal in the visual builder by default", async () => {
+  renderSignals()
+  await waitFor(() => screen.getByText("Momentum Pop"))
+  fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
+  expect(await screen.findByLabelText(/match combinator/i)).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: /add condition/i })).toBeInTheDocument()
+})
+
+// 11. Building a condition emits the right JsonLogic on save
+it("builds a condition in the visual builder and saves it as JsonLogic", async () => {
+  const created = vi.fn()
+  server.use(
+    http.post(`${API}/signal-rules`, async ({ request }) => {
+      created(await request.json())
+      return HttpResponse.json({ id: "sr-new", slug: "s", name: "x", expression: {}, weight: 1, enabled: true, is_builtin: false, sort_order: 9, formatted: "RSI(14) < 30", created_at: "x", updated_at: "x", deleted_at: null }, { status: 201 })
+    })
+  )
+  renderSignals()
+  await waitFor(() => screen.getByText("Momentum Pop"))
+  fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
+  fireEvent.change(await screen.findByLabelText(/signal name/i), { target: { value: "Oversold" } })
+
+  fireEvent.change(await screen.findByLabelText(/condition 1 variable/i), { target: { value: "rsi_14" } })
+  fireEvent.change(screen.getByLabelText(/condition 1 operator/i), { target: { value: "<" } })
+  fireEvent.change(screen.getByLabelText(/condition 1 value/i), { target: { value: "30" } })
+
+  await waitFor(() => expect(screen.getByText(/^Valid$/)).toBeInTheDocument(), { timeout: 3000 })
+  const createBtn = screen.getByRole("button", { name: /create signal/i })
+  await waitFor(() => expect(createBtn).toBeEnabled())
+  fireEvent.click(createBtn)
+  await waitFor(() => expect(created).toHaveBeenCalled())
+  expect(created.mock.calls[0][0].expression).toEqual({ "<": [{ var: "rsi_14" }, 30] })
+})
+
+// 12. Builder → JSON escape hatch reflects the built expression
+it("shows the builder's expression when switching to JSON", async () => {
+  renderSignals()
+  await waitFor(() => screen.getByText("Momentum Pop"))
+  fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
+  fireEvent.change(await screen.findByLabelText(/condition 1 variable/i), { target: { value: "bb_squeeze" } })
+  fireEvent.change(screen.getByLabelText(/condition 1 operator/i), { target: { value: "is_true" } })
+  fireEvent.click(screen.getByRole("button", { name: /^json$/i }))
+  const textarea = await screen.findByLabelText(/expression json/i)
+  expect(textarea.value).toContain("bb_squeeze")
 })

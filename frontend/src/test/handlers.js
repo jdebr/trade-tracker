@@ -349,6 +349,18 @@ export const handlers = [
 
   // ---- Rule engine (validate / preview / preview-universe) ----------------
 
+  http.get(`${API_URL}/rules/variables`, () =>
+    HttpResponse.json({
+      variables: [
+        { name: "rsi_14",     type: "number",  label: "RSI(14)",    group: "momentum",   description: "Relative Strength Index" },
+        { name: "macd_hist",  type: "number",  label: "MACD Histogram", group: "momentum", description: "MACD minus signal" },
+        { name: "bb_squeeze", type: "boolean", label: "BB Squeeze", group: "volatility", description: "Squeeze active" },
+        { name: "close",      type: "number",  label: "Close",      group: "price",      description: "Latest close" },
+        { name: "ema_50",     type: "number",  label: "EMA 50",     group: "trend",      description: "50-day EMA" },
+      ],
+    })
+  ),
+
   http.post(`${API_URL}/rules/validate`, async ({ request }) => {
     const { rule } = await request.json()
     const valid = !JSON.stringify(rule).includes("nope")

@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query"
-import { X, Check, AlertTriangle, Globe, Lock } from "lucide-react"
+import { X, Check, AlertTriangle, Globe, Lock, Blocks, Code2 } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Combobox } from "@/components/ui/Combobox"
 import { useDebounce } from "@/lib/useDebounce"
+import ConditionBuilder, { logicToConditions } from "@/components/ConditionBuilder"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,17 @@ export default function SignalRuleDialog({
   )
   const [saveError, setSaveError] = useState(null)
   const [universeResult, setUniverseResult] = useState(null)
+  const [editorMode, setEditorMode] = useState("builder")   // "builder" | "json" (create/clone only)
+  const [builderKey, setBuilderKey] = useState(0)
+
+  // Variables for the builder's pickers.
+  const { data: variablesResp } = useQuery({
+    queryKey: ["rule-variables"],
+    queryFn: () => api.get("/rules/variables"),
+    staleTime: Infinity,
+    enabled: open,
+  })
+  const variables = variablesResp?.variables ?? []
 
   // Seed the form each time the dialog opens.
   useEffect(() => {
@@ -104,6 +116,11 @@ export default function SignalRuleDialog({
       setWeight(1)
       setType("")
       setExprText(initialExpression ? stringifyExpr(initialExpression) : "")
+      // Start in the structured builder unless a cloned expression is too complex
+      // for it (nested groups, arithmetic) — then drop straight to JSON.
+      const representable = initialExpression ? logicToConditions(initialExpression) !== null : true
+      setEditorMode(representable ? "builder" : "json")
+      setBuilderKey((k) => k + 1)
     }
   }, [open, isEdit, rule, initialName, initialExpression])
 
@@ -121,6 +138,19 @@ export default function SignalRuleDialog({
       return { ok: false, error: e.message }
     }
   }, [exprText])
+
+  // Structured-builder seed + whether the current expression fits the builder.
+  const builderSeed = useMemo(
+    () => (parsed.ok ? logicToConditions(parsed.value) : null),
+    [parsed]
+  )
+  const builderRepresentable = parsed.empty || builderSeed !== null
+
+  function switchToBuilder() {
+    if (!builderRepresentable) return
+    setEditorMode("builder")
+    setBuilderKey((k) => k + 1)   // remount so it reseeds from the current text
+  }
 
   const debouncedText = useDebounce(exprText, 400)
   const settled = debouncedText.trim() === exprText.trim()
@@ -281,32 +311,77 @@ export default function SignalRuleDialog({
                 </Field>
               </div>
 
-              <Field
-                label={
-                  <span className="inline-flex items-center gap-1.5">
-                    Expression (JsonLogic)
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-muted-foreground inline-flex items-center gap-1.5">
+                    Expression
                     {isEdit && <Lock size={11} aria-hidden="true" />}
                   </span>
-                }
-                hint={
-                  isEdit
-                    ? "Locked once created — clone to change the logic."
-                    : 'e.g. {"<": [{"var": "rsi_14"}, 30]}'
-                }
-              >
-                <textarea
-                  className={cn(
-                    inputClass,
-                    "font-mono text-xs leading-relaxed resize-y min-h-[7rem]",
-                    isEdit && "opacity-70 cursor-not-allowed"
+                  {!isEdit && (
+                    <div className="inline-flex rounded-md border border-border p-0.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={switchToBuilder}
+                        disabled={!builderRepresentable}
+                        title={builderRepresentable ? undefined : "This expression is too complex for the visual builder — edit it as JSON."}
+                        className={cn(
+                          "px-2 py-1 rounded inline-flex items-center gap-1 transition-colors",
+                          editorMode === "builder" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground",
+                          !builderRepresentable && "opacity-40 cursor-not-allowed"
+                        )}
+                      >
+                        <Blocks size={12} aria-hidden="true" /> Builder
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditorMode("json")}
+                        className={cn(
+                          "px-2 py-1 rounded inline-flex items-center gap-1 transition-colors",
+                          editorMode === "json" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        <Code2 size={12} aria-hidden="true" /> JSON
+                      </button>
+                    </div>
                   )}
-                  value={exprText}
-                  onChange={(e) => setExprText(e.target.value)}
-                  readOnly={isEdit}
-                  spellCheck={false}
-                  aria-label="Expression JSON"
-                />
-              </Field>
+                </div>
+
+                {isEdit ? (
+                  <>
+                    <textarea
+                      className={cn(inputClass, "font-mono text-xs leading-relaxed resize-y min-h-[7rem] opacity-70 cursor-not-allowed")}
+                      value={exprText}
+                      readOnly
+                      spellCheck={false}
+                      aria-label="Expression JSON"
+                    />
+                    <span className="text-[11px] text-muted-foreground/70">Locked once created — clone to change the logic.</span>
+                  </>
+                ) : editorMode === "builder" ? (
+                  variables.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-2">Loading variables…</p>
+                  ) : (
+                    <ConditionBuilder
+                      key={builderKey}
+                      seed={builderSeed}
+                      variables={variables}
+                      onChange={(obj) => setExprText(obj ? JSON.stringify(obj, null, 2) : "")}
+                    />
+                  )
+                ) : (
+                  <>
+                    <textarea
+                      className={cn(inputClass, "font-mono text-xs leading-relaxed resize-y min-h-[7rem]")}
+                      value={exprText}
+                      onChange={(e) => setExprText(e.target.value)}
+                      spellCheck={false}
+                      aria-label="Expression JSON"
+                      placeholder='{"<": [{"var": "rsi_14"}, 30]}'
+                    />
+                    <span className="text-[11px] text-muted-foreground/70">Raw JsonLogic — the escape hatch for anything the builder can&rsquo;t express.</span>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* ---------------- Live feedback ---------------- */}
