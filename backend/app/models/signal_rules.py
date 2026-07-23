@@ -17,6 +17,9 @@ class SignalRule(BaseModel):
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None
+    # Server-computed human-readable form of `expression` (e.g. "RSI(14) < 30"), so
+    # the management UI can list rules without re-deriving it or calling /rules.
+    formatted: Optional[str] = None
 
 
 class SignalRuleCreate(BaseModel):

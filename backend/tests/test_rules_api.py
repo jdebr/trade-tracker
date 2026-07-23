@@ -92,3 +92,50 @@ def test_preview_malformed_returns_errors_not_500():
     assert body["value"] is False
     assert body["errors"]
     mocked.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# /rules/preview-universe — simulate a run for one candidate rule
+# ---------------------------------------------------------------------------
+
+def test_preview_universe_matches_symbols():
+    contexts = {
+        "AAA": {"rsi_14": 25.0, "bb_squeeze": True},   # rsi < 30 → match
+        "BBB": {"rsi_14": 40.0, "bb_squeeze": False},  # no
+        "CCC": {"rsi_14": 28.0, "bb_squeeze": True},   # match
+    }
+    with patch("app.services.screener.pass1_filter", return_value=["AAA", "BBB", "CCC"]), \
+         patch("app.services.screener.build_feature_contexts", return_value=contexts):
+        resp = client.post("/rules/preview-universe", json={"rule": {"<": [{"var": "rsi_14"}, 30]}})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["universe_count"] == 3
+    assert body["evaluated_count"] == 3
+    assert body["match_count"] == 2
+    assert body["matched"] == ["AAA", "CCC"]          # sorted
+    assert body["values"]["AAA"] == {"rsi_14": 25.0}  # only rule-relevant vars
+    assert "BBB" not in body["values"]                # values only for matches
+    assert body["formatted"] == "RSI(14) < 30"
+    assert body["errors"] == []
+
+
+def test_preview_universe_invalid_rule_short_circuits():
+    # An unknown-variable rule must return errors without ever touching the DB.
+    with patch("app.services.screener.pass1_filter") as p1:
+        resp = client.post("/rules/preview-universe", json={"rule": {"<": [{"var": "nope"}, 30]}})
+    body = resp.json()
+    assert body["match_count"] == 0
+    assert any("unknown variable" in e for e in body["errors"])
+    p1.assert_not_called()
+
+
+def test_preview_universe_skips_symbols_without_snapshot():
+    # A symbol with no usable snapshot is counted in the universe but not evaluated.
+    contexts = {"AAA": {"rsi_14": 25.0}, "BBB": {}}
+    with patch("app.services.screener.pass1_filter", return_value=["AAA", "BBB"]), \
+         patch("app.services.screener.build_feature_contexts", return_value=contexts):
+        resp = client.post("/rules/preview-universe", json={"rule": {"<": [{"var": "rsi_14"}, 30]}})
+    body = resp.json()
+    assert body["universe_count"] == 2
+    assert body["evaluated_count"] == 1
+    assert body["matched"] == ["AAA"]

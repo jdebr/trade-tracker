@@ -29,6 +29,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from app.database import get_client
 from app.services.feature_context import build_feature_contexts, snapshot_present
+from app.services.rule_engine import RuleError, evaluate, extract_variables
 from app.services import signal_rules as sr
 
 logger = logging.getLogger(__name__)
@@ -180,6 +181,60 @@ def pass2_score(symbols: list[str]) -> list[dict]:
     for i, c in enumerate(candidates):
         c["rank"] = i + 1
     return candidates
+
+
+# ---------------------------------------------------------------------------
+# Rule preview against the full universe (builder aid, no persistence)
+# ---------------------------------------------------------------------------
+
+def preview_rule_over_universe(rule: dict) -> dict:
+    """
+    Evaluate a single candidate rule against the **current cached data** for the
+    full Pass-1 universe and return the matching symbols + their rule-relevant
+    feature values.
+
+    Reuses the exact functions a real run uses (`pass1_filter` +
+    `build_feature_contexts` + the M18 `evaluate`), so the universe and values are
+    identical to what an actual scan would score. No external fetch and no
+    indicator recompute — just the same cheap cache reads Pass 2 performs.
+
+    The rule is evaluated in isolation ("which tickers does this fire on"), not as
+    an addition to the enabled set. Symbols without a usable snapshot are skipped.
+    Caller is expected to have validated the rule already.
+    """
+    symbols = pass1_filter()
+    contexts = build_feature_contexts(symbols)
+    vars_used = sorted(extract_variables(rule))
+
+    matched: list[str] = []
+    values: dict[str, dict] = {}
+    evaluated = 0
+    for sym in symbols:
+        features = contexts.get(sym) or {}
+        if not snapshot_present(features):
+            continue
+        evaluated += 1
+        try:
+            hit = bool(evaluate(rule, features))
+        except RuleError:
+            hit = False
+        if hit:
+            matched.append(sym)
+            values[sym] = {v: features.get(v) for v in vars_used}
+
+    matched.sort()
+    logger.info(
+        "Rule universe preview: %d matched of %d evaluated (%d Pass-1 survivors)",
+        len(matched), evaluated, len(symbols),
+    )
+    return {
+        "universe_count": len(symbols),
+        "evaluated_count": evaluated,
+        "match_count": len(matched),
+        "matched": matched,
+        "values": {s: values[s] for s in matched},
+        "variables_used": vars_used,
+    }
 
 
 # ---------------------------------------------------------------------------

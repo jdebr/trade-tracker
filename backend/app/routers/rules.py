@@ -11,10 +11,13 @@ from fastapi import APIRouter
 from app.models.rules import (
     RulePreviewRequest,
     RulePreviewResponse,
+    RulePreviewUniverseRequest,
+    RulePreviewUniverseResponse,
     RuleValidateRequest,
     RuleValidateResponse,
     VariablesResponse,
 )
+from app.services import screener
 from app.services.feature_context import (
     VARIABLE_LABELS,
     VARIABLE_NAMES,
@@ -78,3 +81,25 @@ def preview_rule(body: RulePreviewRequest):
         "formatted": formatted,
         "errors": [],
     }
+
+
+@router.post("/preview-universe", response_model=RulePreviewUniverseResponse)
+def preview_rule_universe(body: RulePreviewUniverseRequest):
+    """
+    Simulate a screener run for one candidate rule against the current cached
+    data: return every Pass-1 symbol the rule fires on, plus the rule-relevant
+    feature values. Cheap (no fetch, no recompute — same cache reads a run does).
+    Returns validation errors without evaluating if the rule is invalid.
+    """
+    formatted = format_human(body.rule, VARIABLE_LABELS)
+    errors = validate(body.rule, VARIABLE_NAMES)
+    if errors:
+        return {
+            "universe_count": 0, "evaluated_count": 0, "match_count": 0,
+            "matched": [], "values": {},
+            "variables_used": sorted(extract_variables(body.rule)),
+            "formatted": formatted, "errors": errors,
+        }
+
+    result = screener.preview_rule_over_universe(body.rule)
+    return {**result, "formatted": formatted, "errors": []}

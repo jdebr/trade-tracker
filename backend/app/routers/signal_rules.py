@@ -13,9 +13,16 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.models.signal_rules import SignalRule, SignalRuleCreate, SignalRuleUpdate
 from app.services import signal_rules as sr
+from app.services.feature_context import VARIABLE_LABELS
+from app.services.rule_engine import format_human
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/signal-rules", tags=["signal-rules"])
+
+
+def _present(rule: dict) -> dict:
+    """Attach the server-computed human-readable expression for the UI."""
+    return {**rule, "formatted": format_human(rule.get("expression") or {}, VARIABLE_LABELS)}
 
 
 def _require(rule_id: str) -> dict:
@@ -30,12 +37,12 @@ def list_signal_rules(
     enabled: Optional[bool] = Query(None),
     include_deleted: bool = Query(False),
 ):
-    return sr.list_rules(enabled=enabled, include_deleted=include_deleted)
+    return [_present(r) for r in sr.list_rules(enabled=enabled, include_deleted=include_deleted)]
 
 
 @router.get("/{rule_id}", response_model=SignalRule)
 def get_signal_rule(rule_id: str):
-    return _require(rule_id)
+    return _present(_require(rule_id))
 
 
 @router.post("", response_model=SignalRule, status_code=201)
@@ -49,7 +56,7 @@ def create_signal_rule(body: SignalRuleCreate):
     if sr.get_rule_by_slug(slug):
         raise HTTPException(status_code=409, detail=f"a signal rule with slug '{slug}' already exists")
     data["slug"] = slug
-    return sr.create_rule(data)
+    return _present(sr.create_rule(data))
 
 
 def _warn_if_builtin_deactivated(rule: dict, action: str) -> None:
@@ -70,17 +77,17 @@ def update_signal_rule(rule_id: str, body: SignalRuleUpdate):
     data = body.model_dump(exclude_unset=True)
     if data.get("enabled") is False:
         _warn_if_builtin_deactivated(rule, "Disabling")
-    return sr.update_rule(rule_id, data)
+    return _present(sr.update_rule(rule_id, data))
 
 
 @router.delete("/{rule_id}", response_model=SignalRule)
 def delete_signal_rule(rule_id: str):
     rule = _require(rule_id)
     _warn_if_builtin_deactivated(rule, "Soft-deleting")
-    return sr.soft_delete_rule(rule_id)
+    return _present(sr.soft_delete_rule(rule_id))
 
 
 @router.post("/{rule_id}/restore", response_model=SignalRule)
 def restore_signal_rule(rule_id: str):
     _require(rule_id)
-    return sr.restore_rule(rule_id)
+    return _present(sr.restore_rule(rule_id))

@@ -37,3 +37,18 @@ class RulePreviewResponse(BaseModel):
     features_used: dict[str, Any]
     formatted: str
     errors: list[str] = []
+
+
+class RulePreviewUniverseRequest(BaseModel):
+    rule: dict[str, Any]
+
+
+class RulePreviewUniverseResponse(BaseModel):
+    universe_count: int       # Pass-1 survivors considered
+    evaluated_count: int      # of those, how many had a usable snapshot
+    match_count: int
+    matched: list[str]                    # matching symbols, sorted
+    values: dict[str, dict[str, Any]]     # {symbol: {var: value}} for matches only
+    variables_used: list[str]
+    formatted: str
+    errors: list[str] = []

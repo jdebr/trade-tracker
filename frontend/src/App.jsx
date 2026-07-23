@@ -11,6 +11,7 @@ import ChartPage     from "@/pages/ChartPage"
 import AlertsPage    from "@/pages/AlertsPage"
 import PositionsPage from "@/pages/PositionsPage"
 import ReportsPage   from "@/pages/ReportsPage"
+import SignalsPage   from "@/pages/SignalsPage"
 import SettingsPage  from "@/pages/SettingsPage"
 
 function NotFoundPage() {
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/chart"     element={<ChartPage />}     />
             <Route path="/alerts"    element={<AlertsPage />}    />
             <Route path="/reports"   element={<ReportsPage />}   />
+            <Route path="/signals"   element={<SignalsPage />}   />
             <Route path="/settings"  element={<SettingsPage />}  />
             <Route path="*"          element={<NotFoundPage />}  />
           </Route>

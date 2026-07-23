@@ -1,6 +1,6 @@
 import {
   ScanSearch, LineChart, Bell, BookMarked,
-  Briefcase, TrendingUp, Settings,
+  Briefcase, TrendingUp, Settings, SlidersHorizontal,
 } from "lucide-react"
 
 /**
@@ -20,6 +20,7 @@ export const NAV_ITEMS = [
   { to: "/chart",     label: "Chart",     Icon: LineChart,  primary: false },
   { to: "/alerts",    label: "Alerts",    Icon: Bell,       primary: true, badge: "alerts" },
   { to: "/reports",   label: "Reports",   Icon: TrendingUp, primary: true  },
+  { to: "/signals",   label: "Signals",   Icon: SlidersHorizontal, primary: false },
   { to: "/settings",  label: "Settings",  Icon: Settings,   primary: false },
 ]
 

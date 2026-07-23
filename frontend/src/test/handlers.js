@@ -37,11 +37,11 @@ export const MOCK_RUN_RESPONSE = {
 // The four seeded builtins plus one custom signal, as GET /signal-rules returns
 // them. Drives dynamic labels/ordering on the Screener.
 export const MOCK_SIGNAL_RULES = [
-  { id: "sr-1", slug: "bb_squeeze",       name: "BB Squeeze",       description: "Bollinger Band squeeze is active",        type: "bb",     expression: { var: "bb_squeeze" }, weight: 1, enabled: true, is_builtin: true,  sort_order: 1, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
-  { id: "sr-2", slug: "rsi_in_range",     name: "RSI in range",     description: "RSI(14) between 35 and 65",                 type: "rsi",    expression: { "<=": [35, { var: "rsi_14" }, 65] }, weight: 1, enabled: true, is_builtin: true, sort_order: 2, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
-  { id: "sr-3", slug: "above_ema50",      name: "Above EMA 50",     description: "Close is above the 50-day EMA",             type: "ema",    expression: { ">": [{ var: "close" }, { var: "ema_50" }] }, weight: 1, enabled: true, is_builtin: true, sort_order: 3, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
-  { id: "sr-4", slug: "volume_expansion", name: "Volume expansion", description: "3-day average volume exceeds 20-day avg",   type: "volume", expression: { ">": [{ var: "vol_3d" }, { var: "vol_20d" }] }, weight: 1, enabled: true, is_builtin: true, sort_order: 4, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
-  { id: "sr-5", slug: "momentum_pop",     name: "Momentum Pop",     description: "MACD histogram turned positive",            type: "macd",   expression: { ">": [{ var: "macd_hist" }, 0] }, weight: 2, enabled: true, is_builtin: false, sort_order: 5, created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-1", slug: "bb_squeeze",       name: "BB Squeeze",       description: "Bollinger Band squeeze is active",        type: "bb",     expression: { var: "bb_squeeze" }, weight: 1, enabled: true, is_builtin: true,  sort_order: 1, formatted: "BB Squeeze", created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-2", slug: "rsi_in_range",     name: "RSI in range",     description: "RSI(14) between 35 and 65",                 type: "rsi",    expression: { "<=": [35, { var: "rsi_14" }, 65] }, weight: 1, enabled: true, is_builtin: true, sort_order: 2, formatted: "35 <= RSI(14) <= 65", created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-3", slug: "above_ema50",      name: "Above EMA 50",     description: "Close is above the 50-day EMA",             type: "ema",    expression: { ">": [{ var: "close" }, { var: "ema_50" }] }, weight: 1, enabled: true, is_builtin: true, sort_order: 3, formatted: "Close > EMA 50", created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-4", slug: "volume_expansion", name: "Volume expansion", description: "3-day average volume exceeds 20-day avg",   type: "volume", expression: { ">": [{ var: "vol_3d" }, { var: "vol_20d" }] }, weight: 1, enabled: true, is_builtin: true, sort_order: 4, formatted: "Volume (3d avg) > Volume (20d avg)", created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
+  { id: "sr-5", slug: "momentum_pop",     name: "Momentum Pop",     description: "MACD histogram turned positive",            type: "macd",   expression: { ">": [{ var: "macd_hist" }, 0] }, weight: 2, enabled: true, is_builtin: false, sort_order: 5, formatted: "MACD Histogram > 0", created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null },
 ]
 
 export const MOCK_ALERTS = [
@@ -316,6 +316,69 @@ export const handlers = [
 
   http.get(`${API_URL}/signal-rules`, () =>
     HttpResponse.json(MOCK_SIGNAL_RULES)
+  ),
+
+  http.post(`${API_URL}/signal-rules`, async ({ request }) => {
+    const body = await request.json()
+    return HttpResponse.json(
+      {
+        id: "sr-new", slug: "new_signal", name: body.name, description: body.description ?? null,
+        type: body.type ?? null, expression: body.expression, weight: body.weight ?? 1,
+        enabled: true, is_builtin: false, sort_order: 99, formatted: "RSI(14) < 30",
+        created_at: MOCK_RUN_AT, updated_at: MOCK_RUN_AT, deleted_at: null,
+      },
+      { status: 201 }
+    )
+  }),
+
+  http.patch(`${API_URL}/signal-rules/:id`, async ({ params, request }) => {
+    const body = await request.json()
+    const base = MOCK_SIGNAL_RULES.find((r) => r.id === params.id) || MOCK_SIGNAL_RULES[0]
+    return HttpResponse.json({ ...base, ...body })
+  }),
+
+  http.delete(`${API_URL}/signal-rules/:id`, ({ params }) => {
+    const base = MOCK_SIGNAL_RULES.find((r) => r.id === params.id) || MOCK_SIGNAL_RULES[0]
+    return HttpResponse.json({ ...base, enabled: false, deleted_at: "2026-03-29T00:00:00Z" })
+  }),
+
+  http.post(`${API_URL}/signal-rules/:id/restore`, ({ params }) => {
+    const base = MOCK_SIGNAL_RULES.find((r) => r.id === params.id) || MOCK_SIGNAL_RULES[0]
+    return HttpResponse.json({ ...base, enabled: true, deleted_at: null })
+  }),
+
+  // ---- Rule engine (validate / preview / preview-universe) ----------------
+
+  http.post(`${API_URL}/rules/validate`, async ({ request }) => {
+    const { rule } = await request.json()
+    const valid = !JSON.stringify(rule).includes("nope")
+    return HttpResponse.json({
+      valid,
+      errors: valid ? [] : ["unknown variable: nope"],
+      variables_used: valid ? ["rsi_14"] : ["nope"],
+      formatted: "RSI(14) < 30",
+    })
+  }),
+
+  http.post(`${API_URL}/rules/preview`, async ({ request }) => {
+    const { symbol } = await request.json()
+    return HttpResponse.json({
+      symbol: (symbol || "").toUpperCase(),
+      value: true,
+      variables_used: ["rsi_14"],
+      features_used: { rsi_14: 27.4 },
+      formatted: "RSI(14) < 30",
+      errors: [],
+    })
+  }),
+
+  http.post(`${API_URL}/rules/preview-universe`, async () =>
+    HttpResponse.json({
+      universe_count: 380, evaluated_count: 372, match_count: 2,
+      matched: ["AMD", "NVDA"],
+      values: { AMD: { rsi_14: 27.4 }, NVDA: { rsi_14: 22.1 } },
+      variables_used: ["rsi_14"], formatted: "RSI(14) < 30", errors: [],
+    })
   ),
 
   // Screener run: POST returns job_id, GET /job/:id returns done immediately
