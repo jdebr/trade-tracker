@@ -45,6 +45,12 @@ describe("logicToConditions", () => {
     expect(logicToConditions({ and: [{ or: [{ var: "a" }, { var: "b" }] }] })).toBeNull()
     expect(logicToConditions({ "+": [{ var: "a" }, 1] })).toBeNull()
   })
+
+  it("returns null for an arithmetic (or non-var/non-number) right-hand side", () => {
+    // Must stay in JSON mode, not be mangled to `vol_3d > null`.
+    expect(logicToConditions({ ">": [{ var: "vol_3d" }, { "*": [1.5, { var: "vol_20d" }] }] })).toBeNull()
+    expect(logicToConditions({ "==": [{ var: "x" }, true] })).toBeNull()
+  })
 })
 
 describe("buildLogic", () => {

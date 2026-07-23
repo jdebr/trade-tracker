@@ -147,8 +147,11 @@ def create_rule(data: dict) -> dict:
 
 
 def update_rule(rule_id: str, data: dict) -> dict | None:
-    payload = {k: v for k, v in data.items() if v is not None}
-    payload["updated_at"] = _now()
+    # `data` comes from the router's model_dump(exclude_unset=True), so every key
+    # present was explicitly sent — a None here means "clear this field", not
+    # "leave unchanged". Apply them all (don't filter None) so description/type can
+    # be cleared. `expression`/`slug` can't appear (model forbids them).
+    payload = {**data, "updated_at": _now()}
     r = get_client().table(TABLE).update(payload).eq("id", rule_id).execute().data
     return r[0] if r else None
 

@@ -200,3 +200,37 @@ def test_list_rules_endpoint():
         resp = client.get("/signal-rules")
     assert resp.status_code == 200
     assert resp.json()[0]["slug"] == "strong_rsi"
+
+
+# ---------------------------------------------------------------------------
+# update_rule payload — explicit nulls must clear fields, not be dropped
+# ---------------------------------------------------------------------------
+
+def test_update_rule_applies_explicit_nulls():
+    """The router sends model_dump(exclude_unset=True), so a present None means
+    'clear it'. update_rule must pass those through, not filter them out."""
+    captured = {}
+
+    class _Update:
+        def eq(self, *a, **k):
+            return self
+        def execute(self):
+            return type("R", (), {"data": [{"id": "x"}]})()
+
+    class _Table:
+        def update(self, payload):
+            captured.update(payload)
+            return _Update()
+
+    class _Client:
+        def table(self, _name):
+            return _Table()
+
+    with patch("app.services.signal_rules.get_client", return_value=_Client()):
+        sr.update_rule("x", {"name": "Renamed", "description": None, "type": None, "weight": 3})
+
+    assert captured["name"] == "Renamed"
+    assert captured["description"] is None   # cleared, not dropped
+    assert captured["type"] is None
+    assert captured["weight"] == 3
+    assert "updated_at" in captured

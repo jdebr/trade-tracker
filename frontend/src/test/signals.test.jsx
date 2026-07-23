@@ -195,3 +195,25 @@ it("shows the builder's expression when switching to JSON", async () => {
   const textarea = await screen.findByLabelText(/expression json/i)
   expect(textarea.value).toContain("bb_squeeze")
 })
+
+// 13. Editing sends `type` (and never `expression`) in the PATCH body
+it("submits type on edit and never the immutable expression", async () => {
+  const patched = vi.fn()
+  server.use(
+    http.patch(`${API}/signal-rules/:id`, async ({ request, params }) => {
+      patched(await request.json())
+      const base = MOCK_SIGNAL_RULES.find((r) => r.id === params.id)
+      return HttpResponse.json({ ...base })
+    })
+  )
+  renderSignals()
+  await waitFor(() => screen.getByText("Momentum Pop"))
+  // Edit the custom "Momentum Pop" signal.
+  fireEvent.click(screen.getByRole("button", { name: /edit momentum pop/i }))
+  fireEvent.change(await screen.findByLabelText(/signal type/i), { target: { value: "trend" } })
+  fireEvent.click(screen.getByRole("button", { name: /save changes/i }))
+  await waitFor(() => expect(patched).toHaveBeenCalled())
+  const body = patched.mock.calls[0][0]
+  expect(body.type).toBe("trend")
+  expect(body).not.toHaveProperty("expression")
+})

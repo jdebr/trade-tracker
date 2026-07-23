@@ -75,7 +75,10 @@ function parseCondition(node) {
     }
     if (args.length !== 2) return null
     const [a, b] = args
-    if (isVar(a)) {
+    // Only a variable LHS with a variable- or number-literal RHS is representable.
+    // An arithmetic/string/bool RHS (e.g. {"*": [...]}) must fall through to null so
+    // the dialog keeps it in JSON mode instead of mangling it to `var > null`.
+    if (isVar(a) && (isVar(b) || isNum(b))) {
       return {
         ...blankCondition(), variable: a.var, operator: op,
         rhsKind: isVar(b) ? "var" : "value",

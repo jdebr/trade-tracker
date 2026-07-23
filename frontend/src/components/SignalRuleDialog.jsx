@@ -164,12 +164,14 @@ export default function SignalRuleDialog({
     }
   }, [debouncedText])
 
-  // Live validate — server owns the human-readable string + error list.
+  // Live validate — server owns the human-readable string + error list. No
+  // keepPreviousData: while the current expression's validation is in flight,
+  // `validation` must be undefined (→ "Checking…", Save disabled) rather than
+  // showing the previous expression's stale "Valid".
   const { data: validation } = useQuery({
     queryKey: ["rule-validate", debouncedParsed],
     queryFn: () => api.post("/rules/validate", { rule: debouncedParsed }),
     enabled: open && !!debouncedParsed,
-    placeholderData: keepPreviousData,
   })
 
   // Single-symbol live preview (only when the rule is valid).
@@ -208,6 +210,7 @@ export default function SignalRuleDialog({
       api.patch(`/signal-rules/${rule.id}`, {
         name: name.trim(),
         description: description.trim() || null,
+        type: type.trim() || null,
         weight: Number(weight) || 1,
       }),
     onSuccess: () => {
