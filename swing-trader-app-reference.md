@@ -833,7 +833,7 @@ A single, reusable boolean-expression engine that both custom indicators (M19) a
 
 ---
 
-### 19. 🔄 Custom & extensible indicators
+### 19. ✅ Custom & extensible indicators (signals)
 
 Turn the hardcoded screener signals into user-defined, named indicators built on the M18 engine, and let new indicators flow automatically into scoring and position tracking.
 

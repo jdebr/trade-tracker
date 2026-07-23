@@ -21,6 +21,7 @@ A personal assistant for finding and monitoring swing trades. It does **not** ex
    - [Alerts](#alerts)
    - [Positions](#positions)
    - [Reports](#reports)
+   - [Signals](#signals)
    - [Settings](#settings)
 5. [Scheduler Controls](#scheduler-controls)
 6. [Alert Types Reference](#alert-types-reference)
@@ -216,7 +217,7 @@ Your daily check-in view. One page to **manage** the tickers you're tracking and
 
 ### Screener
 
-Ranks the full S&P 500 universe by signal score (0–4) so you can find trade candidates each week.
+Ranks the full S&P 500 universe by signal score so you can find trade candidates each week.
 
 **The results table:**
 
@@ -224,14 +225,16 @@ Ranks the full S&P 500 universe by signal score (0–4) so you can find trade ca
 |---|---|
 | # | Rank (1 = strongest signal) |
 | Symbol | Ticker; hover for company name |
-| Score | 0–4 badge — count of signals firing |
+| Score | `achieved / max` badge plus a normalized % (e.g. `3/4 · 75%`) |
 | Close | Most recent closing price |
-| BB Squeeze | Signal active? |
-| RSI Range | RSI between 35–65? |
-| Above EMA 50 | Price above the 50-day EMA? |
-| Vol Expand | 3-day avg volume > 20-day avg volume? |
+| Signals | One dot per signal — filled (green) means the condition is true for that ticker; hover a dot for what it means |
 
-Each signal column is a dot — filled means the condition is true for that ticker.
+**The score is now data-driven.** The signals it counts, and the maximum it scores out of, come from whatever you've enabled on the [Signals](#signals) page — not a fixed set of four. Out of the box there are four seeded signals (BB Squeeze, RSI in Range, Above EMA 50, Volume Expansion), so a fresh install scores out of 4. Add or disable signals and the columns and the denominator change with them.
+
+- **`achieved / max`** — how many weighted points fired, out of the most attainable given the signals live when the run happened.
+- **The normalized %** is the same thing as a 0–100% fraction. Because it's frozen per run, a `75%` from a four-signal era and a `75%` from a six-signal era are directly comparable — useful once you've changed your signal set over time.
+
+Older results generated before this change still display correctly, scored out of 4.
 
 **Running the screener:**
 - Click **Screen Tickers**. Results appear in a few seconds — the screener reads from cached data, no API calls needed.
@@ -245,6 +248,8 @@ Each signal column is a dot — filled means the condition is true for that tick
 - **Recompute Indicators** — recomputes indicators from cached OHLCV without re-fetching price data. Faster than a full refresh.
 
 The screener also runs **automatically every Saturday night** so results are ready before your Sunday review. You rarely need to trigger it manually.
+
+**Changed your signals?** Adding, enabling, or reweighting a signal only affects *future* runs — past results keep the scores they were computed with. Click **Screen Tickers** to re-score with your current signal set. See [Signals](#signals).
 
 ---
 
@@ -335,7 +340,7 @@ Why expectancy beats win rate: you can win **80% of your trades and still lose m
 
 **Which signals are working** — the table near the bottom is the reason this page exists.
 
-For each signal (BB Squeeze, RSI in Range, Above EMA 50, Volume Expansion), it compares trades where that signal fired at entry against trades where it didn't, and shows the difference as an **edge**.
+For each signal — the four seeded ones plus any custom [Signals](#signals) you've added — it compares trades where that signal fired at entry against trades where it didn't, and shows the difference as an **edge**. A signal you removed still appears here as long as closed trades recorded it at entry, so its track record isn't lost.
 
 - A **positive edge** means trades with that signal did better. It's pulling its weight.
 - A **negative edge** means trades with that signal did *worse*. It may be actively costing you money.
@@ -343,6 +348,45 @@ For each signal (BB Squeeze, RSI in Range, Above EMA 50, Volume Expansion), it c
 That's the evidence you use to tune what the app alerts you about.
 
 > **Careful:** an edge measured across three trades is not an edge, it's noise. The app marks thin samples with a **thin** tag and warns you above the metrics. You need a few dozen closed trades before any of this means much — which is exactly what simulation mode is for.
+
+---
+
+### Signals
+
+The rules that score the Screener — and, in time, the raw material for custom alerts. A **signal** is a named yes/no condition over a ticker's indicators (e.g. *"RSI is below 30"*, *"Close is above the 50-day EMA"*). Each enabled signal a ticker satisfies adds its **weight** to that ticker's screener score.
+
+The app ships with four seeded signals (BB Squeeze, RSI in Range, Above EMA 50, Volume Expansion) — the original hardcoded four, now just ordinary editable rows. You can add your own, disable ones you don't want, and change how much each is worth.
+
+**The list** — one row per signal:
+
+| Element | What it does |
+|---|---|
+| **Light toggle** | On/off. A disabled signal stops counting toward the score on the next run. |
+| **Name + `×weight`** | The display name and how many points it contributes. |
+| **Expression** | The rule in plain reading form (e.g. `35 ≤ RSI(14) ≤ 65`). |
+| **builtin** badge | Marks the four seeded signals. |
+| **Edit / Clone / Remove** | See below. |
+
+**Creating a signal.** Click **New signal**. You get a name, an optional description, a weight, and the condition itself — built two ways:
+
+- **Builder** (default) — pick a variable, an operator, and a value from dropdowns. "Match **all**" combines conditions with AND; "Match **any**" with OR. The right-hand side of a comparison can be a number *or* another variable (so `Close > EMA 50` is buildable). Boolean variables (like BB Squeeze) offer *is true / is false*; numbers offer `< ≤ > ≥ = ≠` and *between*.
+- **JSON** — the escape hatch. Raw [JsonLogic](https://jsonlogic.com/) for anything the builder can't express (nested groups, arithmetic). The two modes are the same rule; switch freely with the toggle. If a rule is too complex for the builder, it stays in JSON and the Builder tab is disabled with a note.
+
+As you build, three checks run live:
+
+1. **Valid / errors** — the rule is validated against the known variable set. An unknown variable or malformed rule is rejected before you can save, with the reason shown.
+2. **Preview on \<symbol\>** — evaluates the rule against one ticker's latest data right now: *fires* or *doesn't fire*, with the actual values it used. The symbol picker is searchable and remembers your last choice.
+3. **Preview across universe** — a button that runs the rule against every ticker in the screener's tradeable universe on the current cached data and reports *"Matches N of M."* It's a fast sanity check on how selective the rule is; it doesn't re-fetch or recompute anything, and it evaluates the rule on its own (not as part of the full score).
+
+**Editing vs. cloning — the one rule to know.** A signal's **expression is locked once created**. You can freely rename it, change its weight or description, and enable/disable it — but you **cannot change its logic in place**. To change the logic, use **Clone**: it opens a new signal pre-filled with the old expression for you to modify and save under a new name.
+
+Why the lock? Every closed trade records which signals fired at entry, by name. If you could silently redefine "RSI in Range" from *35–65* to *40–60*, every past trade's attribution would quietly become a lie, and the Reports edge analysis would be built on sand. Freezing the expression keeps a signal's name meaning exactly one thing, forever.
+
+**Removing and restoring.** **Remove** soft-deletes a signal (it stops scoring but its history is retained); a confirmation appears first. Removed signals live under **Show removed**, each with a **Restore** button. Removing a builtin is allowed but warns you — the Screener's built-in columns for it will stop updating.
+
+**Applying changes.** Signals take effect on the **next screener run**. After adding, enabling, or reweighting, head to the [Screener](#screener) and click **Screen Tickers** to re-score. Past results are immutable and keep their original scores.
+
+> **Tech note:** Signals are rows in the `signal_rules` table; scoring iterates the enabled set through a shared rule engine (`POST /rules/validate`, `/rules/preview`, `/rules/preview-universe` power the builder's live checks). The screener dual-writes the four builtin results into their legacy columns for back-compat, so nothing downstream breaks as the set changes. Per-run `signal_score_normalized` is frozen at evaluation time for cross-era comparability.
 
 ---
 
@@ -563,7 +607,13 @@ edge_r        = avg_R(trades with signal) − avg_R(trades without signal)
 | `POST /scheduler/resume` | Resume immediately |
 | `POST /screener/run` | Run the screener (async, returns job_id) |
 | `POST /screener/refresh-data` | Refresh OHLCV + indicators for all tickers |
-| `GET /screener/results` | Latest screener results |
+| `GET /screener/results` | Latest screener results (includes the dynamic `signals` map + normalized score) |
+| `GET /signal-rules` · `POST /signal-rules` | List / create scoring signals (`?include_deleted=true` to include removed) |
+| `PATCH /signal-rules/{id}` | Edit name/description/weight/enabled (expression is immutable) |
+| `DELETE /signal-rules/{id}` · `POST /signal-rules/{id}/restore` | Soft-delete / restore a signal |
+| `GET /rules/variables` | The variables a signal expression may reference, with labels |
+| `POST /rules/validate` · `POST /rules/preview` | Validate a rule; evaluate it against one symbol's live data |
+| `POST /rules/preview-universe` | Evaluate a rule across the Pass-1 universe — "matches N of M" |
 | `GET /indicators/snapshots` | Latest indicator values for watchlist |
 | `GET /ohlcv/bars?symbol=X` | OHLCV bar history for a symbol |
 | `GET /alerts?category=position` | Unacknowledged alerts, optionally filtered by category |
