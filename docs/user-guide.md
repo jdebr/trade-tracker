@@ -367,12 +367,19 @@ The app ships with four seeded signals (BB Squeeze, RSI in Range, Above EMA 50, 
 | **builtin** badge | Marks the four seeded signals. |
 | **Edit / Clone / Remove** | See below. |
 
-**Creating a signal.** Click **New signal**. You get a name, an optional description, a weight, and the condition itself — built two ways:
+Above the list, a **search box** filters by name, type, description, or expression text, and a **sort** menu orders by default order, name, weight, newest, or enabled-first (your sort choice is remembered).
 
-- **Builder** (default) — pick a variable, an operator, and a value from dropdowns. "Match **all**" combines conditions with AND; "Match **any**" with OR. The right-hand side of a comparison can be a number *or* another variable (so `Close > EMA 50` is buildable). Boolean variables (like BB Squeeze) offer *is true / is false*; numbers offer `< ≤ > ≥ = ≠` and *between*.
-- **JSON** — the escape hatch. Raw [JsonLogic](https://jsonlogic.com/) for anything the builder can't express (nested groups, arithmetic). The two modes are the same rule; switch freely with the toggle. If a rule is too complex for the builder, it stays in JSON and the Builder tab is disabled with a note.
+**Creating a signal.** Click **New signal**. The dialog has two screens:
 
-As you build, three checks run live:
+- **Details** — name, optional description, **weight** (a whole number, 1 or more — the field flags anything else inline), an optional type tag, and a read-only rendering of the expression. Click **Build expression** (or **Edit expression**) to define the logic.
+- **Expression editor** — a full-width screen just for the rule. **Apply expression** keeps your changes and returns to Details; **Cancel** (or Esc) throws them away and restores what was there before. Details you'd already typed are untouched either way.
+
+The editor works two ways:
+
+- **Builder** (default) — each condition reads as a sentence of clickable pieces: *RSI (14)* · *<* · *30*. Click a piece to change it; once you pick a value it goes back to plain text. A new condition walks you through its blanks in order (variable → operator → value). With more than one condition, "Fires when **all** / **any** of these are true" combines them with AND / OR. The right-hand side of a comparison can be a number (**123**) *or* another variable (**var**), so `Close > EMA 50` is buildable. Boolean variables (like BB Squeeze) offer *is true / is false*; numbers offer `< ≤ > ≥ = ≠` and *between*.
+- **JSON** — the escape hatch. Raw [JsonLogic](https://jsonlogic.com/) for anything the builder can't express (nested groups, arithmetic). The two modes are the same rule; switch freely with the toggle. If a rule is too complex for the builder, it opens in JSON and the Builder tab is disabled with a note.
+
+As you build, three checks run live (on both screens):
 
 1. **Valid / errors** — the rule is validated against the known variable set. An unknown variable or malformed rule is rejected before you can save, with the reason shown.
 2. **Preview on \<symbol\>** — evaluates the rule against one ticker's latest data right now: *fires* or *doesn't fire*, with the actual values it used. The symbol picker is searchable and remembers your last choice.

@@ -234,3 +234,77 @@ def test_update_rule_applies_explicit_nulls():
     assert captured["type"] is None
     assert captured["weight"] == 3
     assert "updated_at" in captured
+
+
+# ---------------------------------------------------------------------------
+# Hardening (M19 re-review)
+# ---------------------------------------------------------------------------
+
+from app.services import rule_engine as re_  # noqa: E402
+
+HUGE = 10 ** 400  # too big for float()
+
+
+def test_validate_rejects_out_of_range_literal():
+    errs = sr.validate_expression({">": [{"*": [{"var": "close"}, HUGE]}, 1]})
+    assert any("out of range" in e for e in errs)
+    assert any("out of range" in e for e in sr.validate_expression({"<": [{"var": "rsi_14"}, 1e300]}))
+    assert sr.validate_expression({"<": [{"var": "rsi_14"}, 30.5]}) == []
+
+
+def test_evaluate_overflow_is_a_rule_error_not_a_crash():
+    # A rule stored before literal-range validation must not abort a scan.
+    rule = {">": [{"*": [{"var": "close"}, HUGE]}, 1]}
+    res = sr.evaluate_signals({"close": 10.0}, [{"slug": "big", "weight": 1, "expression": rule}])
+    assert res["signals"]["big"] is False
+
+
+def test_format_human_survives_huge_literal():
+    assert "1" in re_.format_human({">": [{"var": "close"}, HUGE]})
+
+
+def test_empty_var_list_is_a_validation_error_not_500():
+    resp = client.post("/signal-rules", json={"name": "Bad", "expression": {"var": []}})
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("body", [{"weight": None}, {"name": None}, {"enabled": None}, {"name": ""}])
+def test_patch_rejects_null_for_not_null_columns(body):
+    with patch("app.routers.signal_rules.sr.update_rule") as m:
+        resp = client.patch("/signal-rules/sr-1", json=body)
+    assert resp.status_code == 422
+    m.assert_not_called()
+
+
+def test_patch_allows_clearing_optional_fields():
+    with patch("app.routers.signal_rules.sr.get_rule", return_value=_full_rule()), \
+         patch("app.routers.signal_rules.sr.update_rule", return_value=_full_rule()) as m:
+        resp = client.patch("/signal-rules/sr-1", json={"description": None, "type": None})
+    assert resp.status_code == 200
+    assert m.call_args[0][1] == {"description": None, "type": None}
+
+
+def test_create_normalizes_client_supplied_slug():
+    with patch("app.routers.signal_rules.sr.get_rule_by_slug", return_value=None), \
+         patch("app.routers.signal_rules.sr.create_rule", return_value=_full_rule()) as m:
+        resp = client.post("/signal-rules", json={
+            "name": "x", "slug": "RSI > 30 ", "expression": {"<": [{"var": "rsi_14"}, 30]},
+        })
+    assert resp.status_code == 201
+    assert m.call_args[0][0]["slug"] == "rsi_30"
+
+
+def test_create_conflict_with_removed_rule_says_restore():
+    removed = _full_rule(name="Momentum", slug="momentum", deleted_at="2026-07-20T01:00:00+00:00")
+    with patch("app.routers.signal_rules.sr.get_rule_by_slug", return_value=removed):
+        resp = client.post("/signal-rules", json={"name": "Momentum", "expression": {"var": "bb_squeeze"}})
+    assert resp.status_code == 409
+    assert "restore" in resp.json()["detail"]
+
+
+def test_create_race_unique_violation_maps_to_409():
+    with patch("app.routers.signal_rules.sr.get_rule_by_slug", return_value=None), \
+         patch("app.routers.signal_rules.sr.create_rule",
+               side_effect=Exception("duplicate key value violates unique constraint (23505)")):
+        resp = client.post("/signal-rules", json={"name": "Dup", "expression": {"var": "bb_squeeze"}})
+    assert resp.status_code == 409

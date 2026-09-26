@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Any, Optional
 from datetime import datetime
 
@@ -23,7 +23,7 @@ class SignalRule(BaseModel):
 
 
 class SignalRuleCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1)
     expression: dict[str, Any]
     description: Optional[str] = None
     type: Optional[str] = None
@@ -40,9 +40,19 @@ class SignalRuleUpdate(BaseModel):
     # so an attempt to PATCH `expression`/`slug` is rejected (422) rather than ignored.
     model_config = ConfigDict(extra="forbid")
 
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     type: Optional[str] = None
     weight: Optional[int] = Field(None, ge=1)
     enabled: Optional[bool] = None
     sort_order: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _no_null_for_required_columns(self):
+        # A present null means "clear it" (see update_rule). Only the optional
+        # columns can be cleared; nulling a NOT NULL column must be a 422, not a
+        # database error surfacing as a 500.
+        for f in ("name", "weight", "enabled", "sort_order"):
+            if f in self.model_fields_set and getattr(self, f) is None:
+                raise ValueError(f"{f} cannot be null")
+        return self

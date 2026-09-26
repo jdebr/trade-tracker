@@ -30,6 +30,7 @@ Public API:
     format_human(rule, labels)    -> str
 """
 
+import math
 import operator
 
 COMPARISON_OPS = {"==", "!=", "<", "<=", ">", ">="}
@@ -60,7 +61,25 @@ def _truthy(value) -> bool:
 
 def _var_name(args):
     """A `var` operand is either "name" or ["name"] (JsonLogic allows both)."""
-    return args[0] if isinstance(args, list) else args
+    if isinstance(args, list):
+        return args[0] if args else None
+    return args
+
+
+# Numeric literals beyond this magnitude are rejected by validate(): huge ints can't
+# be converted to float (OverflowError in evaluate/format_human), and nothing a
+# price/indicator rule needs comes close.
+MAX_LITERAL = 1e15
+
+
+def _literal_error(node) -> str | None:
+    if isinstance(node, bool) or not isinstance(node, (int, float)):
+        return None
+    try:
+        ok = math.isfinite(float(node)) and abs(node) <= MAX_LITERAL
+    except OverflowError:
+        ok = False
+    return None if ok else f"numeric literal out of range: {node!r} (max magnitude {MAX_LITERAL:g})"
 
 
 def _compare(op: str, vals: list):
@@ -94,7 +113,7 @@ def _arith(op: str, vals: list):
             return a * b
         if op == "/":
             return a / b if b != 0 else None
-    except TypeError:
+    except (TypeError, ArithmeticError):
         return None
 
 
@@ -157,7 +176,12 @@ def evaluate(rule, features: dict) -> bool:
     Self-defending: raises RuleError on a malformed/unvalidated rule (never a bare
     RecursionError/IndexError), so bulk callers can wrap a single try/except.
     """
-    return _truthy(_eval(rule, features))
+    try:
+        return _truthy(_eval(rule, features))
+    except (ArithmeticError, ValueError, RecursionError) as e:
+        # e.g. OverflowError from an int too large for float, in a rule stored
+        # before literal-range validation existed. Callers only catch RuleError.
+        raise RuleError(f"evaluation failed: {type(e).__name__}: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +229,9 @@ def validate(rule, known_vars=None) -> list[str]:
             errors.append(f"expression nested too deeply (max depth {MAX_DEPTH})")
             return
         if node is None or isinstance(node, (bool, int, float, str)):
+            err = _literal_error(node)
+            if err:
+                errors.append(err)
             return  # literal
         if not isinstance(node, dict) or len(node) != 1:
             errors.append(f"malformed node: {node!r}")
@@ -259,8 +286,11 @@ _OP_SYMBOL = {
 
 
 def _num(v) -> str:
-    f = float(v)
-    return str(int(f)) if f.is_integer() else f"{f:g}"
+    try:
+        f = float(v)
+        return str(int(f)) if f.is_integer() else f"{f:g}"
+    except (OverflowError, ValueError, TypeError):
+        return str(v)
 
 
 def format_human(rule, labels=None) -> str:

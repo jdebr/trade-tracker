@@ -930,8 +930,12 @@ Turn the hardcoded screener signals into user-defined, named indicators built on
 - **Management surface:** own `/signals` page in nav.
 - **Screener display:** dynamic — score `achieved/max` + normalized %, dots-on-demand (see UI decisions above).
 
+**Post-smoke-test polish (M19c):** token-style builder (each slot rests as a readable pill, click to edit, auto-advance through blanks); a dedicated full-width expression editor view inside the dialog with Apply/Cancel (Escape never discards edits; unfinished rows block Apply); inline whole-number weight validation with real 422 messages; search + sort on the Signals list. Re-review hardening: numeric literals capped at 1e15 in `validate`, `evaluate` converts arithmetic/overflow errors to `RuleError` (one bad stored rule can't abort a scan), `{"var": []}` is a 422, PATCH rejects nulls for NOT NULL columns, client slugs are normalized, and a 409 for a removed signal's name says to restore it.
+
 **Deferred / future (post-M19b)**
 - **Configurable Pass 1.** The Pass-1 gate (`MIN_AVG_VOLUME`, `MIN_PRICE`/`MAX_PRICE`, `is_etf`) is currently hardcoded in `screener.py`. Make it user-configurable (likely `app_settings` columns or a small `screener_config` row) so the tradeable universe isn't fixed. Touches `pass1_filter()` and, by extension, the universe that `/rules/preview-universe` reports against. Independent quick win; no dependency on the M19b slices.
+- **Supabase row-cap check on screener bulk reads** — `feature_context._recent_bars_by_symbol` uses `.limit(len(symbols)*20)` and `indicator_cache.get_latest_snapshots` sets none; if the project's max-rows cap (default 1000) applies, a large Pass-1 universe would silently get short `vol_20d` windows / dropped snapshots. Pre-existing pattern (not an M19 regression) — verify the project setting or paginate. Surfaced by the M19 re-review.
+- **Builder: `between` with low > high** is accepted and simply never fires; could warn inline.
 - **Full-universe preview memoization** — cache `build_feature_contexts(pass1_survivors)` with a short TTL if repeated previews feel slow (skip until measured).
 
 ---

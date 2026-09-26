@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react"
 import { Link } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Plus, Pencil, Copy, Trash2, RotateCcw, Info } from "lucide-react"
+import { Plus, Pencil, Copy, Trash2, RotateCcw, Info, Search } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +12,39 @@ import SignalRuleDialog from "@/components/SignalRuleDialog"
 import { cn } from "@/lib/utils"
 
 const MANAGE_KEY = ["signal-rules", "manage"]
+const SORT_KEY = "signalsSort"
+
+const SORTS = {
+  order:   { label: "Default order",   cmp: (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) },
+  name:    { label: "Name (A–Z)",      cmp: (a, b) => a.name.localeCompare(b.name) },
+  weight:  { label: "Weight (high→low)", cmp: (a, b) => (b.weight ?? 0) - (a.weight ?? 0) },
+  newest:  { label: "Newest first",    cmp: (a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) },
+  enabled: { label: "Enabled first",   cmp: (a, b) => Number(!!b.enabled) - Number(!!a.enabled) },
+}
+
+function readSort() {
+  try {
+    const v = localStorage.getItem(SORT_KEY)
+    return v && SORTS[v] ? v : "order"
+  } catch {
+    return "order"
+  }
+}
+
+/** Case-insensitive match against everything a user might remember a signal by. */
+function matchesQuery(rule, q) {
+  if (!q) return true
+  return [rule.name, rule.slug, rule.description, rule.type, rule.formatted]
+    .some((f) => f && String(f).toLowerCase().includes(q))
+}
+
+/** Filter + sort; ties fall back to sort_order then name so the order is stable. */
+function arrange(list, q, sort) {
+  const cmp = SORTS[sort].cmp
+  return list
+    .filter((r) => matchesQuery(r, q))
+    .sort((a, b) => cmp(a, b) || SORTS.order.cmp(a, b) || a.name.localeCompare(b.name))
+}
 
 // ---------------------------------------------------------------------------
 // The on/off "light"
@@ -121,6 +154,13 @@ export default function SignalsPage() {
   const [showRemoved, setShowRemoved] = useState(false)
   const [dialog, setDialog] = useState(null)   // { mode, rule?, initialExpression?, initialName? }
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [query, setQuery] = useState("")
+  const [sort, setSort] = useState(readSort)
+
+  function changeSort(v) {
+    setSort(v)
+    try { localStorage.setItem(SORT_KEY, v) } catch { /* per-session only */ }
+  }
 
   const { data: rules, isLoading, isError } = useQuery({
     queryKey: MANAGE_KEY,
@@ -145,6 +185,10 @@ export default function SignalsPage() {
     for (const rule of rules ?? []) (rule.deleted_at ? r : a).push(rule)
     return { active: a, removed: r }
   }, [rules])
+
+  const q = query.trim().toLowerCase()
+  const shownActive = useMemo(() => arrange(active, q, sort), [active, q, sort])
+  const shownRemoved = useMemo(() => arrange(removed, q, sort), [removed, q, sort])
 
   // ---- Enable/disable (optimistic) ----
   const { mutate: toggleRule, isPending: toggling } = useMutation({
@@ -202,6 +246,38 @@ export default function SignalsPage() {
         </span>
       </div>
 
+      {/* Search + sort */}
+      {active.length + removed.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[12rem]">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name, type, expression…"
+              aria-label="Search signals"
+              className="w-full rounded-md border border-input bg-background pl-8 pr-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <select
+            value={sort}
+            onChange={(e) => changeSort(e.target.value)}
+            aria-label="Sort signals"
+            className="rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+          >
+            {Object.entries(SORTS).map(([k, v]) => (
+              <option key={k} value={k}>{v.label}</option>
+            ))}
+          </select>
+          {q && (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {shownActive.length} of {active.length}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* List */}
       {isLoading && (
         <div className="space-y-2" aria-label="Loading signals">
@@ -220,9 +296,15 @@ export default function SignalsPage() {
         </div>
       )}
 
-      {active.length > 0 && (
+      {active.length > 0 && shownActive.length === 0 && (
+        <div role="status" className="rounded-lg border border-border px-4 py-6 text-center text-sm text-muted-foreground">
+          No signals match &ldquo;{query.trim()}&rdquo;.
+        </div>
+      )}
+
+      {shownActive.length > 0 && (
         <div className="rounded-lg border border-border overflow-hidden">
-          {active.map((rule) => (
+          {shownActive.map((rule) => (
             <SignalRow
               key={rule.id}
               rule={rule}
@@ -243,11 +325,11 @@ export default function SignalsPage() {
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             onClick={() => setShowRemoved((v) => !v)}
           >
-            {showRemoved ? "Hide" : "Show"} removed ({removed.length})
+            {showRemoved ? "Hide" : "Show"} removed ({q ? `${shownRemoved.length} of ${removed.length}` : removed.length})
           </button>
-          {showRemoved && (
+          {showRemoved && shownRemoved.length > 0 && (
             <div className="mt-2 rounded-lg border border-border overflow-hidden">
-              {removed.map((rule) => (
+              {shownRemoved.map((rule) => (
                 <SignalRow
                   key={rule.id}
                   rule={rule}

@@ -14,6 +14,15 @@
  * 10. New signal opens in the visual builder by default
  * 11. Building a condition in the builder saves the right JsonLogic
  * 12. Switching to JSON shows the builder's expression as text
+ * 13. Editing sends `type` (and never `expression`) in the PATCH body
+ * 14. Cancel in the expression editor discards its edits
+ * 15. A decimal weight shows an inline error and blocks saving
+ * 16. A server 422 surfaces the actual field error, not a generic expression message
+ * 17. Search filters the list; sort reorders it
+ * 18. Apply is blocked while a builder row is unfinished (no silent drop)
+ * 19. Escape in the editor never discards edits
+ * 20. Closing a pill with Enter returns focus to the pill
+ * 21. A universe result is hidden once the expression changes
  */
 
 import { it, expect, vi } from "vitest"
@@ -24,6 +33,7 @@ import { http, HttpResponse } from "msw"
 import { server } from "./msw-server"
 import { MOCK_SIGNAL_RULES } from "./handlers"
 import SignalsPage from "../pages/SignalsPage"
+import { friendlyError } from "../lib/signalRuleErrors"
 
 const API = "http://localhost:8000"
 
@@ -108,7 +118,8 @@ it("enables Create when the expression validates and saves via POST", async () =
   fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
 
   fireEvent.change(await screen.findByLabelText(/signal name/i), { target: { value: "Strong oversold" } })
-  // Drop to the raw-JSON escape hatch and type the expression.
+  // Open the expression editor, drop to the raw-JSON escape hatch, type it.
+  fireEvent.click(screen.getByRole("button", { name: /build expression/i }))
   fireEvent.click(screen.getByRole("button", { name: /^json$/i }))
   fireEvent.change(await screen.findByLabelText(/expression json/i), {
     target: { value: '{"<": [{"var": "rsi_14"}, 30]}' },
@@ -116,6 +127,7 @@ it("enables Create when the expression validates and saves via POST", async () =
 
   // Validation is debounced; wait for the "Valid" panel.
   await waitFor(() => expect(screen.getByText(/^Valid$/)).toBeInTheDocument(), { timeout: 3000 })
+  fireEvent.click(screen.getByRole("button", { name: /apply expression/i }))
   const createBtn = screen.getByRole("button", { name: /create signal/i })
   await waitFor(() => expect(createBtn).toBeEnabled())
   fireEvent.click(createBtn)
@@ -154,7 +166,9 @@ it("opens a new signal in the visual builder by default", async () => {
   renderSignals()
   await waitFor(() => screen.getByText("Momentum Pop"))
   fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
-  expect(await screen.findByLabelText(/match combinator/i)).toBeInTheDocument()
+  fireEvent.click(await screen.findByRole("button", { name: /build expression/i }))
+  // A fresh builder opens straight onto its first slot's picker.
+  expect(await screen.findByLabelText("Condition 1 variable")).toBeInTheDocument()
   expect(screen.getByRole("button", { name: /add condition/i })).toBeInTheDocument()
 })
 
@@ -171,12 +185,17 @@ it("builds a condition in the visual builder and saves it as JsonLogic", async (
   await waitFor(() => screen.getByText("Momentum Pop"))
   fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
   fireEvent.change(await screen.findByLabelText(/signal name/i), { target: { value: "Oversold" } })
+  fireEvent.click(screen.getByRole("button", { name: /build expression/i }))
 
-  fireEvent.change(await screen.findByLabelText(/condition 1 variable/i), { target: { value: "rsi_14" } })
-  fireEvent.change(screen.getByLabelText(/condition 1 operator/i), { target: { value: "<" } })
-  fireEvent.change(screen.getByLabelText(/condition 1 value/i), { target: { value: "30" } })
+  // Each pick auto-advances to the next empty slot.
+  fireEvent.change(await screen.findByLabelText("Condition 1 variable"), { target: { value: "rsi_14" } })
+  fireEvent.change(await screen.findByLabelText("Condition 1 operator"), { target: { value: "<" } })
+  fireEvent.change(await screen.findByLabelText("Condition 1 value"), { target: { value: "30" } })
 
   await waitFor(() => expect(screen.getByText(/^Valid$/)).toBeInTheDocument(), { timeout: 3000 })
+  // Committed slots rest as readable tokens.
+  expect(screen.getByRole("button", { name: /condition 1 variable: rsi/i })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole("button", { name: /apply expression/i }))
   const createBtn = screen.getByRole("button", { name: /create signal/i })
   await waitFor(() => expect(createBtn).toBeEnabled())
   fireEvent.click(createBtn)
@@ -189,8 +208,9 @@ it("shows the builder's expression when switching to JSON", async () => {
   renderSignals()
   await waitFor(() => screen.getByText("Momentum Pop"))
   fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
-  fireEvent.change(await screen.findByLabelText(/condition 1 variable/i), { target: { value: "bb_squeeze" } })
-  fireEvent.change(screen.getByLabelText(/condition 1 operator/i), { target: { value: "is_true" } })
+  fireEvent.click(await screen.findByRole("button", { name: /build expression/i }))
+  fireEvent.change(await screen.findByLabelText("Condition 1 variable"), { target: { value: "bb_squeeze" } })
+  fireEvent.change(await screen.findByLabelText("Condition 1 operator"), { target: { value: "is_true" } })
   fireEvent.click(screen.getByRole("button", { name: /^json$/i }))
   const textarea = await screen.findByLabelText(/expression json/i)
   expect(textarea.value).toContain("bb_squeeze")
@@ -216,4 +236,130 @@ it("submits type on edit and never the immutable expression", async () => {
   const body = patched.mock.calls[0][0]
   expect(body.type).toBe("trend")
   expect(body).not.toHaveProperty("expression")
+})
+
+// 14. Cancel in the expression editor restores the previous expression
+it("discards expression edits on Cancel", async () => {
+  renderSignals()
+  await waitFor(() => screen.getByText("Momentum Pop"))
+  fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
+  fireEvent.change(await screen.findByLabelText(/signal name/i), { target: { value: "Temp" } })
+  fireEvent.click(screen.getByRole("button", { name: /build expression/i }))
+  fireEvent.change(await screen.findByLabelText("Condition 1 variable"), { target: { value: "bb_squeeze" } })
+  fireEvent.change(await screen.findByLabelText("Condition 1 operator"), { target: { value: "is_true" } })
+  fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }))
+
+  // Back on the details view: still empty, name preserved, Create still disabled.
+  expect(await screen.findByText(/no conditions yet/i)).toBeInTheDocument()
+  expect(screen.getByLabelText(/signal name/i)).toHaveValue("Temp")
+  expect(screen.getByRole("button", { name: /create signal/i })).toBeDisabled()
+})
+
+// 15. Decimal weight -> inline error, Save disabled
+it("flags a decimal weight inline and blocks saving", async () => {
+  renderSignals()
+  await waitFor(() => screen.getByText("Momentum Pop"))
+  fireEvent.click(screen.getByRole("button", { name: /edit momentum pop/i }))
+  const weight = await screen.findByLabelText(/signal weight/i)
+  fireEvent.change(weight, { target: { value: "1.5" } })
+  expect(screen.getByText(/whole number/i)).toBeInTheDocument()
+  expect(weight).toHaveAttribute("aria-invalid", "true")
+  expect(screen.getByRole("button", { name: /save changes/i })).toBeDisabled()
+
+  fireEvent.change(weight, { target: { value: "2" } })
+  expect(screen.queryByText(/whole number/i)).not.toBeInTheDocument()
+  expect(screen.getByRole("button", { name: /save changes/i })).toBeEnabled()
+})
+
+// 16. 422 messages name the real problem
+it("maps server 422s to the actual field error", () => {
+  const pyd = new Error('API 422: {"detail":[{"loc":["body","weight"],"msg":"Input should be a valid integer"}]}')
+  expect(friendlyError(pyd)).toMatch(/weight: Input should be a valid integer/)
+  const expr = new Error('API 422: {"detail":{"errors":["unknown variable: nope"]}}')
+  expect(friendlyError(expr)).toMatch(/invalid expression.*unknown variable/i)
+  expect(friendlyError(new Error("API 409: {}"))).toMatch(/already exists/)
+  const removed = new Error('API 409: {"detail":"a signal named \'Momentum\' already exists (it was removed — restore it instead)"}')
+  expect(friendlyError(removed)).toMatch(/^A signal named 'Momentum'.*restore it instead/)
+})
+
+// 17. Search + sort
+it("filters by search and reorders by sort", async () => {
+  renderSignals()
+  await waitFor(() => screen.getByText("Momentum Pop"))
+
+  fireEvent.change(screen.getByLabelText(/search signals/i), { target: { value: "momentum" } })
+  expect(screen.getByText("Momentum Pop")).toBeInTheDocument()
+  expect(screen.queryByText("Above EMA 50")).not.toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText(/search signals/i), { target: { value: "zzz-nothing" } })
+  expect(screen.getByText(/no signals match/i)).toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText(/search signals/i), { target: { value: "" } })
+  fireEvent.change(screen.getByLabelText(/sort signals/i), { target: { value: "weight" } })
+  // Momentum Pop is the only weight-2 rule, so it leads.
+  const firstEdit = screen.getAllByRole("button", { name: /^edit /i })[0]
+  expect(firstEdit).toHaveAccessibleName("Edit Momentum Pop")
+})
+
+async function openBuilder() {
+  renderSignals()
+  await waitFor(() => screen.getByText("Momentum Pop"))
+  fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
+  fireEvent.click(await screen.findByRole("button", { name: /build expression/i }))
+}
+
+async function buildRsiBelow(n) {
+  fireEvent.change(await screen.findByLabelText("Condition 1 variable"), { target: { value: "rsi_14" } })
+  fireEvent.change(await screen.findByLabelText("Condition 1 operator"), { target: { value: "<" } })
+  fireEvent.change(await screen.findByLabelText("Condition 1 value"), { target: { value: String(n) } })
+}
+
+// 18. Unfinished rows block Apply instead of vanishing
+it("blocks Apply while a condition is unfinished", async () => {
+  await openBuilder()
+  await buildRsiBelow(30)
+  fireEvent.click(screen.getByRole("button", { name: /add condition/i }))
+  fireEvent.change(await screen.findByLabelText("Condition 2 variable"), { target: { value: "macd_hist" } })
+  fireEvent.change(await screen.findByLabelText("Condition 2 operator"), { target: { value: ">" } })
+
+  expect(await screen.findByText(/condition 2 is incomplete/i)).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: /apply expression/i })).toBeDisabled()
+
+  fireEvent.change(await screen.findByLabelText("Condition 2 value"), { target: { value: "0" } })
+  await waitFor(() => expect(screen.getByRole("button", { name: /apply expression/i })).toBeEnabled())
+})
+
+// 19. Escape does not throw away edits
+it("keeps edits when Escape is pressed in the editor", async () => {
+  await openBuilder()
+  await buildRsiBelow(30)
+  fireEvent.keyDown(screen.getByLabelText("Condition 1 value"), { key: "Enter" })
+  // Escape from a non-control element with unsaved changes: stays in the editor.
+  fireEvent.keyDown(document.activeElement || document.body, { key: "Escape" })
+  expect(screen.getByRole("button", { name: /apply expression/i })).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: /condition 1 compare to: 30/i })).toBeInTheDocument()
+})
+
+// 20. Focus returns to the pill after Enter
+it("returns focus to the pill when its control closes", async () => {
+  await openBuilder()
+  await buildRsiBelow(30)
+  fireEvent.keyDown(screen.getByLabelText("Condition 1 value"), { key: "Enter" })
+  const pill = await screen.findByRole("button", { name: /condition 1 compare to: 30/i })
+  await waitFor(() => expect(pill).toHaveFocus())
+})
+
+// 21. Universe result is tied to the expression it was computed for
+it("hides a universe result once the expression changes", async () => {
+  await openBuilder()
+  await buildRsiBelow(30)
+  const run = screen.getByRole("button", { name: /preview across universe/i })
+  await waitFor(() => expect(run).toBeEnabled(), { timeout: 3000 })
+  fireEvent.click(run)
+  expect(await screen.findByText(/matches/i)).toBeInTheDocument()
+
+  fireEvent.keyDown(screen.getByLabelText("Condition 1 value"), { key: "Enter" })
+  fireEvent.click(await screen.findByRole("button", { name: /condition 1 compare to: 30/i }))
+  fireEvent.change(await screen.findByLabelText("Condition 1 value"), { target: { value: "70" } })
+  await waitFor(() => expect(screen.queryByText(/^Matches/)).not.toBeInTheDocument())
 })

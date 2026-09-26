@@ -50,54 +50,88 @@ Before starting, confirm:
 **❌ Fail:** The toggle doesn't move, snaps back unexpectedly, or throws an error.
 
 ### B3. Edit is name/weight only — expression is locked
-**Steps:** Click the **pencil (Edit)** icon on **RSI in range**. In the dialog, change the **Weight** to `2`. Note the **Expression** area shows a lock and is greyed/read-only. Click **Save changes**.
-**✅ Pass:** The dialog's expression is read-only (you can't type in it) with a "locked" note. After saving, the row shows `×2`.
-**❌ Fail:** You can edit the expression text, or the weight change doesn't persist.
+**Steps:** Click the **pencil (Edit)** icon on **RSI in range**. Note the **Expression** card shows a lock, the rule rendered as readable pieces (`RSI (14)` · `between` · `35` and `65`), no **Edit expression** button, and a collapsible **JSON** section. Change the **Weight** to `2`. Click **Save changes**.
+**✅ Pass:** The expression can't be edited (nothing to click into) and carries a "locked" note. After saving, the row shows `×2`.
+**❌ Fail:** You can change the expression, or the weight change doesn't persist.
 
-> Restore the weight to `×1` before moving on (Edit → Weight `1` → Save), or leave it — Cleanup doesn't touch builtins.
+> Restore the weight to `×1` before moving on (Edit → Weight `1` → Save), or leave it — Cleanup covers it.
+
+### B3b. Weight must be a whole number (regression)
+**Steps:** Edit any signal. Type `1.5` in **Weight**. Then try `0`, then clear the field, then type `3`.
+**✅ Pass:** For `1.5`, `0`, and empty, the Weight box turns red with **"Must be a whole number, 1 or more."** (or **"Required."**) right under it, and **Save changes** is disabled. At `3` the error disappears and Save is enabled. You never see a message blaming "the expression".
+**❌ Fail:** Save is allowed with a bad weight, the error only appears after clicking Save, or the message talks about the expression.
+**Then:** Cancel.
 
 ### B4. Clone opens a pre-filled create dialog
 **Steps:** Click the **copy (Clone)** icon on **Above EMA 50**.
-**✅ Pass:** A **New signal** dialog opens with the name pre-filled as **"Copy of Above EMA 50"** and the same condition already populated (in the builder you'll see `Close > EMA 50`). You can now edit the logic.
+**✅ Pass:** A **New signal** dialog opens with the name pre-filled as **"Copy of Above EMA 50"** and the Expression card already showing `Close` · `>` · `EMA 50`, with an **Edit expression** button. The Valid panel on the right reads **"Close > EMA 50"**.
 **❌ Fail:** Empty dialog, or the expression didn't carry over.
 **Then:** Close the dialog (Cancel) — we'll build a real one next.
+
+### B5. Search and sort the list
+**Steps:** Type `ema` in the **Search** box. Then clear it and type `rsi`. Then clear it, and change the sort menu to **Name (A–Z)**; reload the page.
+**✅ Pass:** `ema` narrows the list to **Above EMA 50** (matches name/expression), `rsi` to **RSI in range**, and a nonsense search shows **"No signals match …"**. **Name (A–Z)** orders alphabetically, and the sort choice is still selected after the reload.
+**❌ Fail:** Search misses obvious matches, the list doesn't reorder, or the sort resets on reload.
+**Then:** Set sort back to **Default order** (optional).
 
 ---
 
 ## Part C — Rule builder: visual mode (M19b.3)
 
-### C1. New signal opens in the visual builder
-**Steps:** Click **New signal**.
-**✅ Pass:** The dialog opens with a **Builder / JSON** toggle set to **Builder**, showing "Match **all** of these conditions" and one empty condition row plus **+ Add condition**.
-**❌ Fail:** Opens in raw JSON, or no builder controls appear.
+### C1. New signal → expression editor opens in the visual builder
+**Steps:** Click **New signal**. On the details screen, the Expression card says **"No conditions yet"**. Click **Build expression**.
+**✅ Pass:** The dialog widens into a dedicated **Expression** screen (title "Expression", a **← Back to signal details** link, and **Cancel / Apply expression** buttons). The **Builder / JSON** toggle is on **Builder**, with one condition row whose **variable** picker is already open/focused, plus **+ Add condition**.
+**❌ Fail:** No separate screen, opens in raw JSON, or no builder controls.
 
-### C2. Build a simple numeric condition
-**Steps:** Name it **"Deep oversold"**. In the condition row: pick variable **RSI(14)**, operator **<**, and type value **30**.
-**✅ Pass:** A green **Valid** panel appears reading **"Reads as: RSI(14) < 30"**. The **Create signal** button becomes enabled.
-**❌ Fail:** No "Valid" panel, wrong reading, or Create stays disabled with a complete condition.
+### C2. Build a condition — guided and readable
+**Steps:** Pick variable **RSI (14)**. Without clicking anything else, pick operator **<**, then type `30` and press **Enter**.
+**✅ Pass:** After each pick the *next* blank opens by itself (variable → operator → value). Once done, the row reads as plain pills — `RSI (14)` · `<` · `30` — with no dropdown chrome and nothing truncated. The green **Valid** panel reads **"Reads as: RSI(14) < 30"**.
+**❌ Fail:** You have to hunt for the next control, a pill shows a clipped/blank value, or no Valid panel.
 
-### C3. Single-symbol live preview
+### C3. Click a pill to change it
+**Steps:** Click the `30` pill, change it to `25`, then click elsewhere. Click the `<` pill and pick **≤**. Press **Esc** while a pill's control is open.
+**✅ Pass:** Each pill turns back into its control on click and back into a pill when you click away / pick. The reading updates to **"RSI(14) ≤ 25"**. **Esc** closes just that pill's control — it does **not** close the editor or the dialog.
+**❌ Fail:** A pill won't reopen, stays stuck as a control, or Esc closes the whole screen.
+**Keyboard check:** after pressing **Enter** on a value, press **Tab** — focus should move on from that pill (to the next control/**×**), not jump back to the top of the dialog.
+
+### C4. Single-symbol live preview
 **Steps:** In the **Preview on** box, confirm a symbol is selected (e.g. AAPL). Type a different symbol and pick it.
 **✅ Pass:** Shows **"Fires on \<SYMBOL\>"** or **"Doesn't fire on \<SYMBOL\>"** with the actual value used (e.g. `rsi_14 = 41.2`). Changing the symbol updates the result.
 **❌ Fail:** No result, a crash, or values never appear.
 
-### C4. Preview across the universe
+### C5. Preview across the universe
 **Steps:** Click **Preview across universe**.
-**✅ Pass:** After a moment it reports **"Matches N of M tickers"** and lists the matching symbols with their RSI values, plus a note about "latest cached data." N should be plausible (RSI < 30 usually matches a handful).
-**❌ Fail:** Nothing happens, an error, or it claims to match everything/nothing implausibly.
+**✅ Pass:** After a moment it reports **"Matches N of M tickers"** and lists the matching symbols with their RSI values, plus a note about "latest cached data." N should be plausible (RSI ≤ 25 usually matches only a few). Now change the value pill (e.g. to `26`): the old result disappears instead of sitting next to the changed rule.
+**❌ Fail:** Nothing happens, an error, or an implausible match count.
 
-### C5. AND / OR and a second condition
-**Steps:** Click **+ Add condition**. Pick **BB Squeeze** → operator **is true**. Leave "Match **all**".
-**✅ Pass:** Reading updates to **"RSI(14) < 30 AND BB Squeeze"**. Switch the combinator to **any** → reading becomes **"... OR ..."**.
-**❌ Fail:** Reading doesn't update, or the boolean variable still shows numeric operators.
+### C6. AND / OR and a second condition
+**Steps:** Click **+ Add condition**. Pick **BB Squeeze** → **is true**.
+**✅ Pass:** An **AND** divider appears between the rows, the header reads **"Fires when `all` of these are true"**, and the reading becomes **"RSI(14) ≤ 25 AND BB Squeeze"**. Click the `all` pill and pick **any** → divider shows **OR**, reading becomes **"… OR …"**. BB Squeeze only offered *is true / is false*.
+**❌ Fail:** Reading doesn't update, or the boolean variable offered numeric operators.
 
-### C6. "Between" and variable-vs-variable
-**Steps:** Remove the BB Squeeze condition (the **×**). Change the first condition's operator to **between** and enter `40` and `60`. Confirm it reads **"40 ≤ RSI(14) ≤ 60"**. Then change the variable to **Close**, operator **>**, switch the right side from **a value** to **a variable**, and pick **EMA 50**.
-**✅ Pass:** Both forms produce valid readings (`40 ≤ RSI(14) ≤ 60`, then `Close > EMA 50`).
+### C7. "Between" and variable-vs-variable
+**Steps:** Remove the BB Squeeze row (the **×**). Click the operator pill on the remaining row, pick **between**, enter `40` then `60`. Confirm it reads **"40 ≤ RSI(14) ≤ 60"**. Then click the variable pill → **Close**, operator → **>**, and in the value slot click **var** (instead of **123**) and pick **EMA 50**.
+**✅ Pass:** Both forms produce valid readings (`40 ≤ RSI(14) ≤ 60`, then `Close > EMA 50`), and the pills show `Close` · `>` · `EMA 50`.
 **❌ Fail:** Either form is unbuildable or reads wrong.
 
-### C7. Create the signal
-**Steps:** Set it back to a simple, distinctive rule for later steps: one condition **MACD Histogram > 0**, name **"MACD positive (test)"**. Click **Create signal**.
+### C8. Cancel discards, Apply keeps
+**Steps:** Click **Cancel**. Then click **Build expression** again, build **MACD Histogram > 0**, and click **Apply expression**.
+**✅ Pass:** After **Cancel** you're back on details with **"No conditions yet"** (nothing you built leaked through) and any name you'd typed is still there. After **Apply**, the details screen's Expression card shows `MACD Histogram` · `>` · `0` and the Valid panel agrees.
+**❌ Fail:** Cancel keeps the edits, Apply loses them, or the name field was wiped.
+
+### C8b. Escape never throws work away (regression)
+**Steps:** Click **Edit expression**. Change the `0` pill to `1` (press Enter). Now press **Esc** a couple of times. Then click into the **Preview on** symbol box and press **Esc** to close its suggestions. Finally set the value back to `0`, click **Apply expression**, reopen with **Edit expression**, and press **Esc** without changing anything.
+**✅ Pass:** With unsaved changes, Esc does nothing destructive — you stay in the editor with `1` intact, and Esc in the symbol box only closes its list. With no changes, Esc returns you to details. Esc never closes the whole dialog from the editor.
+**❌ Fail:** Esc discards your edits or closes the dialog.
+
+### C8c. Unfinished conditions block Apply (regression)
+**Steps:** In the editor, **+ Add condition**, pick **RSI (14)** and **>**, but leave the value blank.
+**✅ Pass:** An amber note says **"Condition 2 is incomplete — finish or remove it to apply."** and **Apply expression** is disabled. Remove that row (the **×**) and Apply is enabled again.
+**❌ Fail:** Apply is allowed and the half-built row silently disappears.
+**Then:** Make sure the rule is just `MACD Histogram > 0` and **Apply**.
+
+### C9. Create the signal
+**Steps:** Name it **"MACD positive (test)"**. Click **Create signal**.
 **✅ Pass:** Dialog closes; the new **MACD positive (test)** row appears in the list with no builtin badge, a light toggle (on), and the expression `MACD Histogram > 0`.
 **❌ Fail:** Save error, or the row doesn't appear.
 
@@ -106,23 +140,23 @@ Before starting, confirm:
 ## Part D — Rule builder: JSON escape hatch & validation
 
 ### D1. Toggle to JSON shows the built expression
-**Steps:** Click **New signal**, build any one condition (e.g. RSI(14) < 25), then click the **JSON** toggle.
+**Steps:** Click **New signal** → **Build expression**, build any one condition (e.g. RSI(14) < 25), then click the **JSON** toggle.
 **✅ Pass:** A textarea shows the raw JsonLogic (e.g. `{"<": [{"var": "rsi_14"}, 25]}`) matching what you built.
 **❌ Fail:** Empty textarea, or content that doesn't match.
 
 ### D2. Invalid JSON is caught
 **Steps:** In JSON mode, break the text (delete a bracket).
-**✅ Pass:** An **"Invalid JSON"** message appears and **Create** is disabled.
+**✅ Pass:** An **"Invalid JSON"** message appears. If you **Apply** anyway, the details screen says the JSON is invalid and **Create** is disabled.
 **❌ Fail:** Shows "Valid", or lets you save broken JSON.
 
 ### D3. Unknown variable is rejected (no false "Valid")
 **Steps:** Replace the text with `{"<": [{"var": "not_a_real_var"}, 10]}`.
-**✅ Pass:** After a brief "Checking…", it shows an **error** naming the unknown variable, and **Create** stays disabled. It must **never** flash a green "Valid" for this.
+**✅ Pass:** After a brief "Checking…", it shows an **error** naming the unknown variable (and **Create** stays disabled if you Apply it). It must **never** flash a green "Valid" for this.
 **❌ Fail:** Shows "Valid" at any point, or lets you create it.
 
 ### D4. Complex expression stays in JSON (regression: arithmetic RHS)
 **Steps:** Paste `{">": [{"var": "vol_3d"}, {"*": [1.5, {"var": "vol_20d"}]}]}` (3-day volume greater than 1.5× the 20-day). Observe the **Builder** toggle.
-**✅ Pass:** It validates as **Valid** ("Reads as: ..."), but the **Builder** tab is **disabled** (with a hover note that it's too complex for the visual builder). It stays in JSON mode. You can still create it, and it is **not** silently altered.
+**✅ Pass:** It validates as **Valid** ("Reads as: ..."), but the **Builder** tab is **disabled** (with a hover note that it's too complex for the visual builder). It stays in JSON mode. **Apply** it: the details screen shows the reading plus a "too complex for the visual builder" note and a **JSON** section, and the expression is **not** silently altered. Clicking **Edit expression** reopens it straight in JSON.
 **❌ Fail:** The Builder tab is enabled and, when clicked, rewrites the expression (e.g. to `vol_3d > null`) — this is the exact bug the review caught; it must not recur.
 **Then:** Cancel out of this dialog (don't save it).
 
@@ -131,7 +165,7 @@ Before starting, confirm:
 ## Part E — Edit fidelity regressions
 
 ### E1. Type field persists on edit
-**Steps:** Edit **MACD positive (test)** (the signal from C7). Set **Type** to `momentum`. Save. Reload the page (or navigate away and back). Edit it again.
+**Steps:** Edit **MACD positive (test)** (the signal from C9). Set **Type** to `momentum`. Save. Reload the page (or navigate away and back). Edit it again.
 **✅ Pass:** The **Type** field still reads `momentum`.
 **❌ Fail:** Type is blank again — the edit was dropped.
 
@@ -170,6 +204,12 @@ This is the payoff: a custom signal actually changes screener scoring.
 **✅ Pass:** A confirmation dialog appears first (titled `Remove "MACD positive (test)"?`), and after confirming the row leaves the active list.
 **❌ Fail:** Deleted with no confirmation, or an error.
 
+### G1b. Re-creating a removed signal's name explains itself
+**Steps:** With **MACD positive (test)** removed, click **New signal**, name it **MACD positive (test)**, build any valid expression, and click **Create signal**.
+**✅ Pass:** Save fails with a message that the name belongs to a **removed** signal and to **restore it instead**, rather than a bare "already exists".
+**❌ Fail:** A generic error, a crash, or a duplicate gets created.
+**Then:** Cancel.
+
 ### G2. Show removed + restore
 **Steps:** Click **Show removed**. Find **MACD positive (test)** and click **Restore**.
 **✅ Pass:** The removed list reveals the signal; Restore returns it to the active list.
@@ -199,8 +239,8 @@ Leave the signal set as you found it:
 | Part | Feature | Pass? |
 |---|---|---|
 | A | Dynamic Screener display | ☐ |
-| B | Signals management (list, toggle, edit, clone) | ☐ |
-| C | Visual rule builder | ☐ |
+| B | Signals management (list, toggle, edit, weight check, clone, search/sort) | ☐ |
+| C | Expression editor + visual builder (pills, apply/cancel) | ☐ |
 | D | JSON mode + validation | ☐ |
 | E | Edit fidelity (type, clear description) | ☐ |
 | F | End-to-end scoring loop | ☐ |
