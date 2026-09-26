@@ -31,6 +31,16 @@ global.ResizeObserver = class ResizeObserver {
   disconnect() {}
 }
 
+// Radix Select/Popover call pointer-capture and scrollIntoView APIs jsdom lacks.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false
+  Element.prototype.setPointerCapture = () => {}
+  Element.prototype.releasePointerCapture = () => {}
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}
+
 beforeAll(() => server.listen({ onUnhandledRequest: "warn" }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())

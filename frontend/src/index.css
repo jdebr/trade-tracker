@@ -1,10 +1,15 @@
 @import "tailwindcss";
 
+/* `dark:` follows the app's .dark class (set on <html>), not the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --color-background:          hsl(var(--background));
   --color-foreground:          hsl(var(--foreground));
   --color-card:                hsl(var(--card));
   --color-card-foreground:     hsl(var(--card-foreground));
+  --color-popover:             hsl(var(--popover));
+  --color-popover-foreground:  hsl(var(--popover-foreground));
   --color-primary:             hsl(var(--primary));
   --color-primary-foreground:  hsl(var(--primary-foreground));
   --color-secondary:           hsl(var(--secondary));
@@ -50,6 +55,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
     --card: 222.2 84% 4.9%;
@@ -83,5 +89,26 @@
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Form polish (M19.5 / UX1) ------------------------------------------------ */
+@layer base {
+  /* Themed, slim scrollbars (floating lists, dialogs, tables). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  }
+
+  /* Native number spinners can't be themed; NumberInput draws its own. Hide
+     the browser's wherever a raw type=number is still in use. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
   }
 }

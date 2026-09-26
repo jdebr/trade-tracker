@@ -313,16 +313,16 @@ describe("SettingsPage", () => {
     renderWithProviders(<SettingsPage />)
 
     await waitFor(() =>
-      expect(screen.getByLabelText("Account size")).toHaveValue(10000)
+      expect(screen.getByLabelText("Account size")).toHaveValue("10000")
     )
-    expect(screen.getByLabelText("Risk per trade percent")).toHaveValue(1)
-    expect(screen.getByLabelText("Default ATR multiplier")).toHaveValue(2)
+    expect(screen.getByLabelText("Risk per trade percent")).toHaveValue("1")
+    expect(screen.getByLabelText("Default ATR multiplier")).toHaveValue("2")
   })
 
   it("saves an edited setting", async () => {
     renderWithProviders(<SettingsPage />)
 
-    await waitFor(() => expect(screen.getByLabelText("Account size")).toHaveValue(10000))
+    await waitFor(() => expect(screen.getByLabelText("Account size")).toHaveValue("10000"))
 
     fireEvent.change(screen.getByLabelText("Account size"), { target: { value: "25000" } })
     fireEvent.click(screen.getByRole("button", { name: /Save settings/i }))

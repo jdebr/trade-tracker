@@ -837,7 +837,7 @@ A single, reusable boolean-expression engine that both custom indicators (M19) a
 
 Turn the hardcoded screener signals into user-defined, named indicators built on the M18 engine, and let new indicators flow automatically into scoring and position tracking.
 
-**Status: M19a (backend) complete + deployed** — `signal_rules` table + service + CRUD API, data-driven screener scoring (dual-write), dynamic `entry_signals`, `signal_score_normalized`, reports generalized; 321 tests green; two adversarial reviews passed; expression immutability locked in. Migration 003 applied to the live DB; committed (38b1548) and deployed to Render (live OpenAPI confirms `/signal-rules` + `/rules` routes). **M19b (frontend) complete, unpushed — pending a UI/UX review before it deploys.** Dynamic Screener display (M19b.1, 35f41bd), signals management page + functional builder + `/rules/preview-universe` (M19b.2, 4925fb2), structured condition builder as the default surface with a JSON escape hatch (M19b.3). Sub-slicing + locked decisions below.
+**Status: complete + deployed.** M19a backend (38b1548); M19b frontend — dynamic Screener display (35f41bd), signals page + builder + `/rules/preview-universe` (4925fb2), structured condition builder (c5e84c5); review fixes (7db9a9e); M19c smoke-test polish + re-review hardening (61a5153, pushed 2026-09-26). Final live smoke test of the M19c changes pending. Sub-slicing + locked decisions below.
 
 **Scope**
 - [ ] `indicators` table: `name`, `slug`, `type` (one of the current indicator families), `expression` (jsonb JsonLogic), `enabled`, `is_builtin`, `weight`, `deleted_at` (soft delete), timestamps
@@ -937,6 +937,61 @@ Turn the hardcoded screener signals into user-defined, named indicators built on
 - **Supabase row-cap check on screener bulk reads** — `feature_context._recent_bars_by_symbol` uses `.limit(len(symbols)*20)` and `indicator_cache.get_latest_snapshots` sets none; if the project's max-rows cap (default 1000) applies, a large Pass-1 universe would silently get short `vol_20d` windows / dropped snapshots. Pre-existing pattern (not an M19 regression) — verify the project setting or paginate. Surfaced by the M19 re-review.
 - **Builder: `between` with low > high** is accepted and simply never fires; could warn inline.
 - **Full-universe preview memoization** — cache `build_feature_contexts(pass1_survivors)` with a short TTL if repeated previews feel slow (skip until measured).
+
+---
+
+### 19.5. ⬜ UX foundations (form primitives + non-blocking interaction)
+
+An app-wide UX pass before M20 adds more UI. Every later milestone builds forms (alerts, library, strategy tagging), so the goal is one shared, well-behaved form layer and one interaction policy instead of per-page copies.
+
+**Goals (from the M19 smoke-test review)**
+1. Inputs accept only valid keystrokes (e.g. a whole-number weight field can't take a `.`).
+2. An input that fails validation always turns red, with a very short hint beside it.
+3. Inputs get the room their content needs: dropdown lists can grow wider than their trigger; textareas resize both ways.
+4. Input sub-elements (dropdown lists, number steppers) are styled like the rest of the app.
+5. Interaction isn't blocked or disabled unless truly necessary: pending work is tracked by a state-machine hook, shown with a spinner or status, and the rest of the app stays usable. Debounce or batch where it helps.
+
+**Audit (2026-09-26)**
+- No shared form layer: 4 copies of `inputClass`, 3 local `Field`s, 5 separate number inputs (RangeInput, ExitPlanDialog `NumberInput`, signal weight, ConditionBuilder `AutoNumber`, Positions exit price), each validating differently or not at all.
+- Native `<select>` in 6 places (ConditionBuilder, ExitPlanDialog, Positions, Settings ×2, Signals sort). Browsers don't let us style option lists or number spinners, so goal 4 requires our own components.
+- `Combobox` list is `w-full` (can't grow), uses hardcoded zinc colours instead of theme tokens, and renders inline, so it's clipped inside scrolling dialogs.
+- Over-broad gating: one pending signal toggle disables all toggles; one alert acknowledgement disables every Acknowledge button; Settings disables Save while saving.
+- Debounce is ad hoc (300ms in ExitPlanDialog, 400ms in SignalRuleDialog).
+
+**Locked decisions**
+- **Dropdowns → Radix.** `@radix-ui/react-select` for selects and `@radix-ui/react-popover` for the Combobox (same family as our Dialog/Tooltip). Content renders in a portal (never clipped), is at least trigger-width and grows to fit its content, avoids screen edges, and uses theme tokens. Tests need a small jsdom shim (`hasPointerCapture`, `scrollIntoView`, `ResizeObserver`); tests that drive native selects get rewritten.
+- **Out-of-range numbers → allow + red.** Keystroke and paste filtering only removes invalid *characters* (letters, `e`, `+`; `.` in integer fields; `-` when `min ≥ 0`). Range and semantic errors show red with a hint and block saving. No clamping while typing (typing 15 with min 10 passes through 1).
+- **Settings → autosave.** Each valid change saves after ~800ms idle, with an inline Saving… / ✓ Saved / ⚠ Failed · Retry status; invalid (red) fields are never sent; the Save button goes away.
+- **Dialogs → lock fields while saving.** A deliberate exception to goal 5: create/edit dialogs briefly freeze their fields and buttons during the save (a discrete commit), then close on success. Everywhere else stays interactive.
+
+**Sub-slices**
+
+**UX1 — Form primitives** (`components/ui/form/`)
+- `Field`: label, hint, error; error = red border/ring + short hint (replaces the hint); screen readers are told the input is invalid and read the hint (`aria-invalid`, `aria-describedby`).
+- `TextInput`, `Textarea` (`resize` both ways; `autoGrow` variant for notes).
+- `NumberInput`: `integer` / `decimal` (with max decimal places), `min`/`max`; `beforeinput` + paste sanitizing; keeps partial states (`""`, `-`, `1.`) while typing; themed stepper buttons with hold-to-repeat; scroll-wheel changes off; emits `number | null`.
+- `Select` (Radix Select, popper positioning, groups, optional description per option).
+- `Combobox` rebuilt on Radix Popover (portal, content-width list, theme tokens; keeps fuzzy ranking, `allowNew`, "not in universe" hint).
+- `RangeInput` re-based on `NumberInput`.
+- `lib/validate.js`: shared validators returning short hint strings (`required`, `integer`, `range`, `maxDecimals`, …).
+- Global CSS: hide native number spinners, themed scrollbars, correct `color-scheme` in dark mode.
+
+**UX2 — Interaction hooks**
+- `useSaveQueue(saveFn, {debounceMs})` state machine: `idle → pending → (queued) → success | error`. Edits made during a save are coalesced (latest wins) and sent when the current save finishes; `retry()`; `flush()` on unmount/navigation.
+- `usePendingKeys()` for per-row pending (toggles, acknowledges, watchlist add/remove) so one row's request never disables another.
+- `<Spinner>` and `<SaveStatus>` components.
+- Policy: never disable an *input* for pending work; disable a *button* only when a click would be wrong (double-submit, invalid data), and show a spinner in it.
+
+**UX3 — Migration sweep** (page by page, each deleting its local `inputClass`/`Field`)
+- Signals: dialog fields, ConditionBuilder pills use `Select`/`NumberInput`, per-row toggle pending, sort `Select`.
+- Settings: autosave via `useSaveQueue`, `NumberInput`/`Select`/`RangeInput`.
+- ExitPlanDialog, Positions close dialog, Watchlist add + group combobox, Screener (per-row add-to-watchlist), Alerts (per-row acknowledge), Login.
+
+**UX4 — Guardrails + docs**
+- A test that fails if raw `<select>` or `type="number"` appears outside `components/ui/form/`.
+- User-guide note on validation/autosave; a UX smoke-test checklist.
+
+**Out of scope:** visual redesign, layout changes beyond input sizing, mobile-specific work.
 
 ---
 
