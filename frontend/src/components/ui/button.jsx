@@ -1,6 +1,7 @@
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva } from "class-variance-authority"
+import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
@@ -33,13 +34,29 @@ const buttonVariants = cva(
   }
 )
 
-function Button({ className, variant, size, asChild = false, ...props }) {
+/**
+ * `loading`: shows a spinner and ignores clicks (guards double-submits) while
+ * keeping full opacity — a busy button isn't a broken one. Use `disabled` only
+ * when a click would be wrong (e.g. invalid form).
+ */
+function Button({ className, variant, size, asChild = false, loading = false, children, onClick, ...props }) {
   const Comp = asChild ? Slot : "button"
   return (
     <Comp
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(buttonVariants({ variant, size, className }), loading && "cursor-progress")}
+      aria-busy={loading || undefined}
+      onClick={loading ? (e) => e.preventDefault() : onClick}
       {...props}
-    />
+    >
+      {loading && !asChild ? (
+        <>
+          <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+          {children}
+        </>
+      ) : (
+        children
+      )}
+    </Comp>
   )
 }
 
