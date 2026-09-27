@@ -16,7 +16,7 @@
  * 12. Switching to JSON shows the builder's expression as text
  * 13. Editing sends `type` (and never `expression`) in the PATCH body
  * 14. Cancel in the expression editor discards its edits
- * 15. A decimal weight shows an inline error and blocks saving
+ * 15. Weight keystrokes are filtered; out-of-range shows red and blocks saving
  * 16. A server 422 surfaces the actual field error, not a generic expression message
  * 17. Search filters the list; sort reorders it
  * 18. Apply is blocked while a builder row is unfinished (no silent drop)
@@ -27,6 +27,7 @@
 
 import { it, expect, vi } from "vitest"
 import { render, screen, waitFor, fireEvent } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { http, HttpResponse } from "msw"
@@ -36,6 +37,24 @@ import SignalsPage from "../pages/SignalsPage"
 import { friendlyError } from "../lib/signalRuleErrors"
 
 const API = "http://localhost:8000"
+
+/**
+ * Choose an option from a themed (Radix) dropdown. Builder pills open their
+ * list on mount; otherwise click the trigger first.
+ */
+/** Close an auto-opened pill list (the builder opens its first slot's list). */
+async function dismissList() {
+  if (screen.queryByRole("listbox")) await userEvent.keyboard("{Escape}")
+  await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument())
+}
+
+async function pick(label, option) {
+  // An open list marks the rest of the page aria-hidden (modal, like a native
+  // select), so look the trigger up including hidden elements.
+  const trigger = await screen.findByRole("combobox", { name: label, hidden: true })
+  if (trigger.getAttribute("aria-expanded") !== "true") await userEvent.click(trigger)
+  await userEvent.click(await screen.findByRole("option", { name: option }))
+}
 
 function renderSignals() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -120,6 +139,7 @@ it("enables Create when the expression validates and saves via POST", async () =
   fireEvent.change(await screen.findByLabelText(/signal name/i), { target: { value: "Strong oversold" } })
   // Open the expression editor, drop to the raw-JSON escape hatch, type it.
   fireEvent.click(screen.getByRole("button", { name: /build expression/i }))
+  await dismissList()
   fireEvent.click(screen.getByRole("button", { name: /^json$/i }))
   fireEvent.change(await screen.findByLabelText(/expression json/i), {
     target: { value: '{"<": [{"var": "rsi_14"}, 30]}' },
@@ -168,7 +188,10 @@ it("opens a new signal in the visual builder by default", async () => {
   fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
   fireEvent.click(await screen.findByRole("button", { name: /build expression/i }))
   // A fresh builder opens straight onto its first slot's picker.
-  expect(await screen.findByLabelText("Condition 1 variable")).toBeInTheDocument()
+  // …with its (themed) list already open.
+  expect(await screen.findByRole("listbox")).toBeInTheDocument()
+  expect(screen.getByRole("option", { name: "RSI(14)" })).toBeInTheDocument()
+  await dismissList()
   expect(screen.getByRole("button", { name: /add condition/i })).toBeInTheDocument()
 })
 
@@ -188,8 +211,8 @@ it("builds a condition in the visual builder and saves it as JsonLogic", async (
   fireEvent.click(screen.getByRole("button", { name: /build expression/i }))
 
   // Each pick auto-advances to the next empty slot.
-  fireEvent.change(await screen.findByLabelText("Condition 1 variable"), { target: { value: "rsi_14" } })
-  fireEvent.change(await screen.findByLabelText("Condition 1 operator"), { target: { value: "<" } })
+  await pick("Condition 1 variable", "RSI(14)")
+  await pick("Condition 1 operator", "<")
   fireEvent.change(await screen.findByLabelText("Condition 1 value"), { target: { value: "30" } })
 
   await waitFor(() => expect(screen.getByText(/^Valid$/)).toBeInTheDocument(), { timeout: 3000 })
@@ -209,8 +232,8 @@ it("shows the builder's expression when switching to JSON", async () => {
   await waitFor(() => screen.getByText("Momentum Pop"))
   fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
   fireEvent.click(await screen.findByRole("button", { name: /build expression/i }))
-  fireEvent.change(await screen.findByLabelText("Condition 1 variable"), { target: { value: "bb_squeeze" } })
-  fireEvent.change(await screen.findByLabelText("Condition 1 operator"), { target: { value: "is_true" } })
+  await pick("Condition 1 variable", "BB Squeeze")
+  await pick("Condition 1 operator", "is true")
   fireEvent.click(screen.getByRole("button", { name: /^json$/i }))
   const textarea = await screen.findByLabelText(/expression json/i)
   expect(textarea.value).toContain("bb_squeeze")
@@ -245,8 +268,8 @@ it("discards expression edits on Cancel", async () => {
   fireEvent.click(screen.getByRole("button", { name: /new signal/i }))
   fireEvent.change(await screen.findByLabelText(/signal name/i), { target: { value: "Temp" } })
   fireEvent.click(screen.getByRole("button", { name: /build expression/i }))
-  fireEvent.change(await screen.findByLabelText("Condition 1 variable"), { target: { value: "bb_squeeze" } })
-  fireEvent.change(await screen.findByLabelText("Condition 1 operator"), { target: { value: "is_true" } })
+  await pick("Condition 1 variable", "BB Squeeze")
+  await pick("Condition 1 operator", "is true")
   fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }))
 
   // Back on the details view: still empty, name preserved, Create still disabled.
@@ -255,19 +278,24 @@ it("discards expression edits on Cancel", async () => {
   expect(screen.getByRole("button", { name: /create signal/i })).toBeDisabled()
 })
 
-// 15. Decimal weight -> inline error, Save disabled
-it("flags a decimal weight inline and blocks saving", async () => {
+// 15. Weight only accepts whole numbers; out-of-range shows red and blocks saving
+it("filters weight keystrokes and flags an out-of-range weight inline", async () => {
   renderSignals()
   await waitFor(() => screen.getByText("Momentum Pop"))
   fireEvent.click(screen.getByRole("button", { name: /edit momentum pop/i }))
-  const weight = await screen.findByLabelText(/signal weight/i)
+  const weight = await screen.findByLabelText("Signal weight")
+
+  // A decimal can't even be entered.
   fireEvent.change(weight, { target: { value: "1.5" } })
-  expect(screen.getByText(/whole number/i)).toBeInTheDocument()
+  expect(weight).toHaveValue("2")
+
+  fireEvent.change(weight, { target: { value: "0" } })
+  expect(screen.getByText("Min 1")).toBeInTheDocument()
   expect(weight).toHaveAttribute("aria-invalid", "true")
   expect(screen.getByRole("button", { name: /save changes/i })).toBeDisabled()
 
-  fireEvent.change(weight, { target: { value: "2" } })
-  expect(screen.queryByText(/whole number/i)).not.toBeInTheDocument()
+  fireEvent.change(weight, { target: { value: "3" } })
+  expect(screen.queryByText("Min 1")).not.toBeInTheDocument()
   expect(screen.getByRole("button", { name: /save changes/i })).toBeEnabled()
 })
 
@@ -295,7 +323,7 @@ it("filters by search and reorders by sort", async () => {
   expect(screen.getByText(/no signals match/i)).toBeInTheDocument()
 
   fireEvent.change(screen.getByLabelText(/search signals/i), { target: { value: "" } })
-  fireEvent.change(screen.getByLabelText(/sort signals/i), { target: { value: "weight" } })
+  await pick("Sort signals", "Weight (high→low)")
   // Momentum Pop is the only weight-2 rule, so it leads.
   const firstEdit = screen.getAllByRole("button", { name: /^edit /i })[0]
   expect(firstEdit).toHaveAccessibleName("Edit Momentum Pop")
@@ -309,8 +337,8 @@ async function openBuilder() {
 }
 
 async function buildRsiBelow(n) {
-  fireEvent.change(await screen.findByLabelText("Condition 1 variable"), { target: { value: "rsi_14" } })
-  fireEvent.change(await screen.findByLabelText("Condition 1 operator"), { target: { value: "<" } })
+  await pick("Condition 1 variable", "RSI(14)")
+  await pick("Condition 1 operator", "<")
   fireEvent.change(await screen.findByLabelText("Condition 1 value"), { target: { value: String(n) } })
 }
 
@@ -319,8 +347,8 @@ it("blocks Apply while a condition is unfinished", async () => {
   await openBuilder()
   await buildRsiBelow(30)
   fireEvent.click(screen.getByRole("button", { name: /add condition/i }))
-  fireEvent.change(await screen.findByLabelText("Condition 2 variable"), { target: { value: "macd_hist" } })
-  fireEvent.change(await screen.findByLabelText("Condition 2 operator"), { target: { value: ">" } })
+  await pick("Condition 2 variable", "MACD Histogram")
+  await pick("Condition 2 operator", ">")
 
   expect(await screen.findByText(/condition 2 is incomplete/i)).toBeInTheDocument()
   expect(screen.getByRole("button", { name: /apply expression/i })).toBeDisabled()

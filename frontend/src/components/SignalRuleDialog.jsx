@@ -4,33 +4,15 @@ import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tansta
 import { X, Check, AlertTriangle, Globe, Lock, Blocks, Code2, Pencil, ArrowLeft } from "lucide-react"
 import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
-import { Combobox } from "@/components/ui/Combobox"
+import { Combobox, Field, TextInput, NumberInput, Textarea } from "@/components/ui/form"
 import { useDebounce } from "@/lib/useDebounce"
 import ConditionBuilder, { logicToConditions, ConditionSummary } from "@/components/ConditionBuilder"
 import { cn } from "@/lib/utils"
-import { friendlyError, weightError } from "@/lib/signalRuleErrors"
+import { friendlyError } from "@/lib/signalRuleErrors"
+import { numberError } from "@/lib/validate"
 
-// ---------------------------------------------------------------------------
-// Local form primitives
-// ---------------------------------------------------------------------------
-
-const inputClass =
-  "w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm " +
-  "focus:outline-none focus:ring-2 focus:ring-ring"
-
-function Field({ label, hint, error, errorId, children }) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      {children}
-      {error ? (
-        <span id={errorId} className="text-[11px] text-destructive">{error}</span>
-      ) : (
-        hint && <span className="text-[11px] text-muted-foreground/70">{hint}</span>
-      )}
-    </label>
-  )
-}
+// Weight: whole points, at least 1 (the score is a sum of integer weights).
+const WEIGHT_RULES = { required: true, integer: true, min: 1 }
 
 const PREVIEW_SYMBOL_KEY = "signalPreviewSymbol"
 
@@ -79,7 +61,8 @@ export default function SignalRuleDialog({
 
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
-  const [weight, setWeight] = useState("1")
+  const [weight, setWeight] = useState(1)
+  const [nameTouched, setNameTouched] = useState(false)
   const [type, setType] = useState("")
   const [exprText, setExprText] = useState("")
   const [previewSymbol, setPreviewSymbol] = useState(() => {
@@ -112,16 +95,17 @@ export default function SignalRuleDialog({
     setSaveError(null)
     setUniverseResult(null)
     setView("details")
+    setNameTouched(false)
     if (isEdit && rule) {
       setName(rule.name ?? "")
       setDescription(rule.description ?? "")
-      setWeight(String(rule.weight ?? 1))
+      setWeight(rule.weight ?? 1)
       setType(rule.type ?? "")
       setExprText(stringifyExpr(rule.expression))
     } else {
       setName(initialName ?? "")
       setDescription("")
-      setWeight("1")
+      setWeight(1)
       setType("")
       setExprText(initialExpression ? stringifyExpr(initialExpression) : "")
     }
@@ -219,14 +203,16 @@ export default function SignalRuleDialog({
   })
   const universeShown = universeResult?.forText === exprText ? universeResult.res : null
 
-  const wError = weightError(weight)
+  const wError = numberError(weight, WEIGHT_RULES)
+  // "Required" appears once you've left the field, not the moment the dialog opens.
+  const nameError = nameTouched && !name.trim() ? "Required" : null
 
   const createMut = useMutation({
     mutationFn: () =>
       api.post("/signal-rules", {
         name: name.trim(),
         description: description.trim() || null,
-        weight: Number(weight),
+        weight,
         type: type.trim() || null,
         expression: parsed.value,
       }),
@@ -243,7 +229,7 @@ export default function SignalRuleDialog({
         name: name.trim(),
         description: description.trim() || null,
         type: type.trim() || null,
-        weight: Number(weight),
+        weight,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["signal-rules"] })
@@ -398,8 +384,8 @@ export default function SignalRuleDialog({
                   )
                 ) : (
                   <div className="flex flex-col gap-1.5">
-                    <textarea
-                      className={cn(inputClass, "font-mono text-xs leading-relaxed resize-y min-h-[12rem]")}
+                    <Textarea
+                      className="font-mono text-xs min-h-[12rem]"
                       value={exprText}
                       onChange={(e) => setExprText(e.target.value)}
                       spellCheck={false}
@@ -417,13 +403,15 @@ export default function SignalRuleDialog({
             </div>
           ) : (
             /* ---------------- Details view ---------------- */
+            // Fields lock while a save is in flight (dialogs commit as one unit).
+            <fieldset disabled={saving} className="contents">
             <div className="grid md:grid-cols-5 gap-5">
               <div className="md:col-span-3 space-y-3.5">
-                <Field label="Name">
-                  <input
-                    className={inputClass}
+                <Field label="Name" error={nameError}>
+                  <TextInput
                     value={name}
                     onChange={(e) => setName(e.target.value)}
+                    onBlur={() => setNameTouched(true)}
                     placeholder="e.g. Strong oversold"
                     aria-label="Signal name"
                     autoFocus
@@ -431,8 +419,7 @@ export default function SignalRuleDialog({
                 </Field>
 
                 <Field label="Description" hint="Optional — shown in tooltips.">
-                  <input
-                    className={inputClass}
+                  <TextInput
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="What does this signal capture?"
@@ -441,23 +428,16 @@ export default function SignalRuleDialog({
                 </Field>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Weight" hint="Points this adds to the score." error={wError} errorId="signal-weight-error">
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      inputMode="numeric"
-                      className={cn(inputClass, "tabular-nums", wError && "border-destructive focus:ring-destructive")}
+                  <Field label="Weight" hint="Points this adds to the score.">
+                    <NumberInput
                       value={weight}
-                      onChange={(e) => setWeight(e.target.value)}
+                      onChange={setWeight}
+                      {...WEIGHT_RULES}
                       aria-label="Signal weight"
-                      aria-invalid={!!wError}
-                      aria-describedby={wError ? "signal-weight-error" : undefined}
                     />
                   </Field>
                   <Field label="Type" hint="Optional family tag.">
-                    <input
-                      className={inputClass}
+                    <TextInput
                       value={type}
                       onChange={(e) => setType(e.target.value)}
                       placeholder="rsi, macd, …"
@@ -497,6 +477,7 @@ export default function SignalRuleDialog({
 
               <div className="md:col-span-2 space-y-3">{livePanels}</div>
             </div>
+            </fieldset>
           )}
 
           {/* Footer */}
@@ -524,7 +505,7 @@ export default function SignalRuleDialog({
                 <DialogPrimitive.Close asChild>
                   <Button variant="outline" size="sm" disabled={saving}>Cancel</Button>
                 </DialogPrimitive.Close>
-                <Button size="sm" onClick={handleSave} disabled={!canSave}>
+                <Button size="sm" onClick={handleSave} disabled={!canSave && !saving} loading={saving}>
                   {saving ? "Saving…" : isEdit ? "Save changes" : "Create signal"}
                 </Button>
               </>

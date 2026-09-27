@@ -13,13 +13,13 @@
  *  9. SettingsPage loads and saves defaults
  */
 
-import { it, expect, describe } from "vitest"
+import { it, expect, describe, vi } from "vitest"
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { http, HttpResponse } from "msw"
 import { server } from "./msw-server"
-import { MOCK_EXIT_PLAN } from "./handlers"
+import { MOCK_EXIT_PLAN, MOCK_SETTINGS } from "./handlers"
 import PositionsPage from "../pages/PositionsPage"
 import ReportsPage from "../pages/ReportsPage"
 import SettingsPage from "../pages/SettingsPage"
@@ -319,14 +319,44 @@ describe("SettingsPage", () => {
     expect(screen.getByLabelText("Default ATR multiplier")).toHaveValue("2")
   })
 
-  it("saves an edited setting", async () => {
+  it("autosaves an edited setting without a Save button", async () => {
+    const patched = vi.fn()
+    server.use(
+      http.patch(`${API}/settings`, async ({ request }) => {
+        const body = await request.json()
+        patched(body)
+        return HttpResponse.json({ ...MOCK_SETTINGS, ...body })
+      })
+    )
     renderWithProviders(<SettingsPage />)
 
     await waitFor(() => expect(screen.getByLabelText("Account size")).toHaveValue("10000"))
+    expect(screen.queryByRole("button", { name: /save settings/i })).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText("Account size"), { target: { value: "25000" } })
-    fireEvent.click(screen.getByRole("button", { name: /Save settings/i }))
+    // Still editable while the save is pending.
+    expect(screen.getByLabelText("Account size")).not.toBeDisabled()
 
+    await waitFor(() => expect(patched).toHaveBeenCalledWith({ account_size: 25000 }), { timeout: 3000 })
     await waitFor(() => expect(screen.getByText("Saved")).toBeInTheDocument())
+  })
+
+  it("marks an invalid value red and never sends it", async () => {
+    const patched = vi.fn()
+    server.use(
+      http.patch(`${API}/settings`, async ({ request }) => {
+        patched(await request.json())
+        return HttpResponse.json(MOCK_SETTINGS)
+      })
+    )
+    renderWithProviders(<SettingsPage />)
+    await waitFor(() => expect(screen.getByLabelText("Max position percent")).toHaveValue("25"))
+
+    fireEvent.change(screen.getByLabelText("Max position percent"), { target: { value: "150" } })
+    expect(screen.getByLabelText("Max position percent")).toHaveAttribute("aria-invalid", "true")
+    expect(screen.getByText("Max 100")).toBeInTheDocument()
+
+    await new Promise((r) => setTimeout(r, 1200))
+    expect(patched).not.toHaveBeenCalled()
   })
 })

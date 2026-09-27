@@ -1,12 +1,4 @@
-// Save-time checks and error messages for the signal builder dialog.
-
-/** Weight must be a whole number ≥ 1 (the score is a sum of integer weights). */
-export function weightError(weight) {
-  const s = String(weight ?? "").trim()
-  if (s === "") return "Required."
-  if (!/^\d+$/.test(s) || Number(s) < 1) return "Must be a whole number, 1 or more."
-  return null
-}
+// Error messages for the signal builder dialog.
 
 /** Turn an `API <status>: <body>` error into something a user can act on. */
 export function friendlyError(err) {

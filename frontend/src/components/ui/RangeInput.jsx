@@ -27,6 +27,7 @@ export function RangeInput({
   step = 1,
   hardMin,
   hardMax,
+  required = false,
   prefix,
   suffix,
   disabled = false,
@@ -63,6 +64,7 @@ export function RangeInput({
           maxDecimals={integer ? 0 : Math.max(2, decimalsOf(step))}
           min={floor}
           max={hardMax}
+          required={required}
           step={step}
           prefix={prefix}
           suffix={suffix}

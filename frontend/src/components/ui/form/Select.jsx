@@ -29,6 +29,9 @@ export const Select = forwardRef(function Select(
     contentClassName,   // floating list
     "aria-label": ariaLabel,
     renderValue,        // optional (option) => node for the trigger
+    open,               // optional controlled open state
+    defaultOpen,        // open on mount (e.g. a builder pill that just got focus)
+    onOpenChange,
     ...props
   },
   ref
@@ -52,7 +55,14 @@ export const Select = forwardRef(function Select(
   const selected = options.find((o) => o.value === value)
 
   return (
-    <SelectPrimitive.Root value={value ?? ""} onValueChange={onValueChange} disabled={disabled}>
+    <SelectPrimitive.Root
+      value={value ?? ""}
+      onValueChange={onValueChange}
+      disabled={disabled}
+      open={open}
+      defaultOpen={defaultOpen}
+      onOpenChange={onOpenChange}
+    >
       <SelectPrimitive.Trigger
         ref={ref}
         id={field.id}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react"
 import { Plus, X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Select, NumberInput } from "@/components/ui/form"
 
 // ---------------------------------------------------------------------------
 // JsonLogic <-> structured conditions
@@ -149,10 +150,6 @@ function incompleteConditions(conditions) {
 // slots so building one is a quick pick → pick → type.
 // ---------------------------------------------------------------------------
 
-const controlClass =
-  "rounded-md border border-input bg-background px-2 py-1 text-sm " +
-  "focus:outline-none focus:ring-2 focus:ring-ring"
-
 const tokenBase = "inline-flex items-center rounded-md px-2 py-0.5 text-sm whitespace-nowrap"
 
 const TOKEN_TONES = {
@@ -163,7 +160,7 @@ const TOKEN_TONES = {
 }
 
 /** A value at rest; click to edit. `children` is the editing control. */
-function Token({ kind, text, placeholder, editing, onEdit, onDone, readOnly, ariaLabel, children }) {
+function Token({ kind, text, placeholder, editing, onEdit, onDone, readOnly, ariaLabel, closeOnBlur = true, children }) {
   const buttonRef = useRef(null)
   const wasEditing = useRef(editing)
   // When this token closes and its control took focus with it (Enter/Escape, or a
@@ -193,10 +190,14 @@ function Token({ kind, text, placeholder, editing, onEdit, onDone, readOnly, ari
       <span
         className="inline-flex items-center gap-1"
         data-token-editing=""
+        // A select's list lives in a portal, so focus "leaving" the pill is
+        // normal for it — selects close via their own onOpenChange instead.
         onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget)) onDone(false)
+          if (closeOnBlur && !e.currentTarget.contains(e.relatedTarget)) onDone(false)
         }}
         onKeyDown={(e) => {
+          // Enter/Escape belong to the select trigger when that's focused.
+          if (e.target.tagName !== "INPUT") return
           if (e.key === "Escape" || e.key === "Enter") {
             e.preventDefault()
             onDone(e.key === "Enter")
@@ -220,43 +221,46 @@ function Token({ kind, text, placeholder, editing, onEdit, onDone, readOnly, ari
   )
 }
 
-/** Focus a control on mount and, for selects, try to pop its option list open. */
-function useAutoOpen() {
+/**
+ * A pill's dropdown: opens itself on mount (the pill was just clicked or
+ * auto-advanced to) and reports when it closes, picked or not. The list is a
+ * themed, portal-rendered Radix Select that grows to fit long labels.
+ */
+function PillSelect({ value, onChange, onClose, options, placeholder, ...props }) {
+  return (
+    <Select
+      defaultOpen
+      value={value}
+      onValueChange={onChange}
+      onOpenChange={(open) => !open && onClose()}
+      options={options}
+      placeholder={placeholder}
+      className="h-7 w-auto min-w-[7rem] py-0.5"
+      {...props}
+    />
+  )
+}
+
+/** A pill's number box: focused on mount, keystroke-filtered, themed steppers. */
+function PillNumber({ value, onChange, ...props }) {
   const ref = useRef(null)
   useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.focus()
-    if (el.tagName === "SELECT") {
-      try { el.showPicker?.() } catch { /* needs a user gesture; focus alone is fine */ }
-    }
+    ref.current?.focus()
   }, [])
-  return ref
-}
-
-function AutoSelect({ className, children, ...props }) {
-  const ref = useAutoOpen()
-  return <select ref={ref} className={cn(controlClass, "cursor-pointer", className)} {...props}>{children}</select>
-}
-
-function AutoNumber({ className, ...props }) {
-  const ref = useAutoOpen()
-  return <input ref={ref} type="number" className={cn(controlClass, "w-24 tabular-nums", className)} {...props} />
-}
-
-function VariableOptions({ variables, groups }) {
   return (
-    <>
-      <option value="">— variable —</option>
-      {groups.map((group) => (
-        <optgroup key={group} label={group}>
-          {variables.filter((v) => v.group === group).map((v) => (
-            <option key={v.name} value={v.name}>{v.label}</option>
-          ))}
-        </optgroup>
-      ))}
-    </>
+    <NumberInput
+      ref={ref}
+      value={value === "" || value == null ? null : Number(value)}
+      onChange={(n) => onChange(n ?? "")}
+      className="w-28"
+      inputClassName="h-7 py-0.5"
+      {...props}
+    />
   )
+}
+
+function variableOptions(variables) {
+  return variables.map((v) => ({ value: v.name, label: v.label, group: v.group }))
 }
 
 /**
@@ -267,7 +271,7 @@ function ConditionList({
   combinator, conditions, variables, readOnly = false,
   editing = null, setEditing = () => {}, onCombinator, onUpdate, onRemove,
 }) {
-  const groups = useMemo(() => [...new Set(variables.map((v) => v.group))], [variables])
+  const varOptions = useMemo(() => variableOptions(variables), [variables])
   const byName = useMemo(() => Object.fromEntries(variables.map((v) => [v.name, v])), [variables])
   const labelOf = (name) => byName[name]?.label ?? name
   const opsFor = (name) => (byName[name]?.type === "boolean" ? BOOLEAN_OPS : NUMBER_OPS)
@@ -287,15 +291,15 @@ function ConditionList({
               onEdit={() => setEditing({ id: "root", field: "combinator" })}
               onDone={() => setEditing((cur) => (cur?.id === "root" ? null : cur))}
               ariaLabel={`Match combinator: ${combinator}`}
+              closeOnBlur={false}
             >
-              <AutoSelect
+              <PillSelect
                 value={combinator}
-                onChange={(e) => { onCombinator(e.target.value); setEditing(null) }}
+                onChange={(v) => { onCombinator(v); setEditing(null) }}
+                onClose={() => setEditing((cur) => (cur?.id === "root" ? null : cur))}
+                options={[{ value: "all", label: "all" }, { value: "any", label: "any" }]}
                 aria-label="Match combinator"
-              >
-                <option value="all">all</option>
-                <option value="any">any</option>
-              </AutoSelect>
+              />
             </Token>
             <span>of these are true:</span>
           </>
@@ -349,19 +353,20 @@ function ConditionList({
                     onEdit={() => setEditing({ id: c._id, field: "variable" })}
                     onDone={done("variable")}
                     ariaLabel={`Condition ${n} variable: ${c.variable ? labelOf(c.variable) : "not set"}`}
+                    closeOnBlur={false}
                   >
-                    <AutoSelect
+                    <PillSelect
                       value={c.variable}
-                      onChange={(e) => {
-                        const v = e.target.value
+                      onChange={(v) => {
                         // Switching bool <-> number invalidates the operator.
                         const keepOp = c.operator && opsFor(v).includes(c.operator)
                         commit({ variable: v, operator: keepOp ? c.operator : "" })
                       }}
+                      onClose={() => done("variable")(false)}
+                      options={varOptions}
+                      placeholder="variable"
                       aria-label={`Condition ${n} variable`}
-                    >
-                      <VariableOptions variables={variables} groups={groups} />
-                    </AutoSelect>
+                    />
                   </Token>
 
                   {c.variable && (
@@ -373,17 +378,16 @@ function ConditionList({
                       onEdit={() => setEditing({ id: c._id, field: "operator" })}
                       onDone={done("operator")}
                       ariaLabel={`Condition ${n} operator: ${c.operator ? OP_LABELS[c.operator] : "not set"}`}
+                      closeOnBlur={false}
                     >
-                      <AutoSelect
+                      <PillSelect
                         value={c.operator}
-                        onChange={(e) => commit({ operator: e.target.value })}
+                        onChange={(op) => commit({ operator: op })}
+                        onClose={() => done("operator")(false)}
+                        options={opsFor(c.variable).map((op) => ({ value: op, label: OP_LABELS[op] }))}
+                        placeholder="is…"
                         aria-label={`Condition ${n} operator`}
-                      >
-                        <option value="">— is —</option>
-                        {opsFor(c.variable).map((op) => (
-                          <option key={op} value={op}>{OP_LABELS[op]}</option>
-                        ))}
-                      </AutoSelect>
+                      />
                     </Token>
                   )}
 
@@ -397,9 +401,9 @@ function ConditionList({
                         onDone={done("low")}
                         ariaLabel={`Condition ${n} low: ${c.low === "" ? "not set" : c.low}`}
                       >
-                        <AutoNumber
+                        <PillNumber
                           value={c.low}
-                          onChange={(e) => onUpdate(c._id, { low: e.target.value })}
+                          onChange={(v) => onUpdate(c._id, { low: v })}
                           aria-label={`Condition ${n} low`} placeholder="low"
                         />
                       </Token>
@@ -412,9 +416,9 @@ function ConditionList({
                         onDone={done("high")}
                         ariaLabel={`Condition ${n} high: ${c.high === "" ? "not set" : c.high}`}
                       >
-                        <AutoNumber
+                        <PillNumber
                           value={c.high}
-                          onChange={(e) => onUpdate(c._id, { high: e.target.value })}
+                          onChange={(v) => onUpdate(c._id, { high: v })}
                           aria-label={`Condition ${n} high`} placeholder="high"
                         />
                       </Token>
@@ -431,6 +435,7 @@ function ConditionList({
                       onEdit={() => setEditing({ id: c._id, field: "rhs" })}
                       onDone={done("rhs")}
                       ariaLabel={`Condition ${n} compare to: ${rhsText || "not set"}`}
+                      closeOnBlur={c.rhsKind !== "var"}
                     >
                       <span className="inline-flex rounded-md border border-border p-0.5 text-[11px]">
                         {[["value", "123"], ["var", "var"]].map(([kind, label]) => (
@@ -452,19 +457,20 @@ function ConditionList({
                         ))}
                       </span>
                       {c.rhsKind === "var" ? (
-                        <AutoSelect
+                        <PillSelect
                           key="var"
                           value={c.rhsVariable}
-                          onChange={(e) => commit({ rhsVariable: e.target.value })}
+                          onChange={(v) => commit({ rhsVariable: v })}
+                          onClose={() => done("rhs")(false)}
+                          options={varOptions}
+                          placeholder="variable"
                           aria-label={`Condition ${n} value variable`}
-                        >
-                          <VariableOptions variables={variables} groups={groups} />
-                        </AutoSelect>
+                        />
                       ) : (
-                        <AutoNumber
+                        <PillNumber
                           key="num"
                           value={c.value}
-                          onChange={(e) => onUpdate(c._id, { value: e.target.value })}
+                          onChange={(v) => onUpdate(c._id, { value: v })}
                           aria-label={`Condition ${n} value`} placeholder="value"
                         />
                       )}

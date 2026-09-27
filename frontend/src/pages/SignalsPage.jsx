@@ -9,6 +9,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip } from "@/components/ui/Tooltip"
 import { ConfirmDialog } from "@/components/ui/Dialog"
 import SignalRuleDialog from "@/components/SignalRuleDialog"
+import { TextInput, Select } from "@/components/ui/form"
+import { Spinner } from "@/components/ui/Spinner"
+import { useKeyedMutation } from "@/lib/useKeyedMutation"
 import { cn } from "@/lib/utils"
 
 const MANAGE_KEY = ["signal-rules", "manage"]
@@ -21,6 +24,8 @@ const SORTS = {
   newest:  { label: "Newest first",    cmp: (a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) },
   enabled: { label: "Enabled first",   cmp: (a, b) => Number(!!b.enabled) - Number(!!a.enabled) },
 }
+
+const SORT_OPTIONS = Object.entries(SORTS).map(([value, v]) => ({ value, label: v.label }))
 
 function readSort() {
   try {
@@ -50,28 +55,35 @@ function arrange(list, q, sort) {
 // The on/off "light"
 // ---------------------------------------------------------------------------
 
-function LightToggle({ enabled, onToggle, disabled, label }) {
+/**
+ * While this row's request is in flight the knob shows a spinner and further
+ * clicks on *this* row are ignored (useKeyedMutation) — every other row stays
+ * fully interactive.
+ */
+function LightToggle({ enabled, onToggle, busy, label }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
+      aria-busy={busy || undefined}
       aria-label={`${enabled ? "Disable" : "Enable"} ${label}`}
-      disabled={disabled}
       onClick={onToggle}
       className={cn(
         "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
         "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 focus:ring-offset-background",
         enabled ? "bg-green-500" : "bg-muted-foreground/30",
-        disabled && "opacity-50 cursor-not-allowed"
+        busy && "cursor-progress"
       )}
     >
       <span
         className={cn(
-          "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+          "inline-flex h-4 w-4 transform items-center justify-center rounded-full bg-white shadow transition-transform",
           enabled ? "translate-x-4" : "translate-x-0.5"
         )}
-      />
+      >
+        {busy && <Spinner size={10} className="text-muted-foreground" />}
+      </span>
     </button>
   )
 }
@@ -80,7 +92,7 @@ function LightToggle({ enabled, onToggle, disabled, label }) {
 // One signal row
 // ---------------------------------------------------------------------------
 
-function SignalRow({ rule, onToggle, onEdit, onClone, onDelete, onRestore, toggling }) {
+function SignalRow({ rule, onToggle, onEdit, onClone, onDelete, onRestore, toggling, restoring }) {
   const removed = !!rule.deleted_at
   return (
     <div
@@ -93,7 +105,7 @@ function SignalRow({ rule, onToggle, onEdit, onClone, onDelete, onRestore, toggl
         <LightToggle
           enabled={rule.enabled}
           onToggle={() => onToggle(rule)}
-          disabled={toggling}
+          busy={toggling}
           label={rule.name}
         />
       )}
@@ -116,8 +128,8 @@ function SignalRow({ rule, onToggle, onEdit, onClone, onDelete, onRestore, toggl
       <div className="flex items-center gap-1 shrink-0">
         {removed ? (
           <Tooltip content="Restore this signal">
-            <Button variant="outline" size="sm" className="h-7 gap-1" onClick={() => onRestore(rule)}>
-              <RotateCcw size={13} aria-hidden="true" /> Restore
+            <Button variant="outline" size="sm" className="h-7 gap-1" loading={restoring} onClick={() => onRestore(rule)}>
+              {!restoring && <RotateCcw size={13} aria-hidden="true" />} Restore
             </Button>
           </Tooltip>
         ) : (
@@ -191,7 +203,8 @@ export default function SignalsPage() {
   const shownRemoved = useMemo(() => arrange(removed, q, sort), [removed, q, sort])
 
   // ---- Enable/disable (optimistic) ----
-  const { mutate: toggleRule, isPending: toggling } = useMutation({
+  const toggle = useKeyedMutation({
+    keyOf: ({ id }) => id,
     mutationFn: ({ id, enabled }) => api.patch(`/signal-rules/${id}`, { enabled }),
     onMutate: async ({ id, enabled }) => {
       await queryClient.cancelQueries({ queryKey: MANAGE_KEY })
@@ -215,7 +228,8 @@ export default function SignalsPage() {
     },
   })
 
-  const { mutate: restoreRule } = useMutation({
+  const restore = useKeyedMutation({
+    keyOf: (id) => id,
     mutationFn: (id) => api.post(`/signal-rules/${id}/restore`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["signal-rules"] }),
   })
@@ -251,25 +265,22 @@ export default function SignalsPage() {
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[12rem]">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-            <input
+            <TextInput
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search name, type, expression…"
               aria-label="Search signals"
-              className="w-full rounded-md border border-input bg-background pl-8 pr-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="pl-8"
             />
           </div>
-          <select
+          <Select
             value={sort}
-            onChange={(e) => changeSort(e.target.value)}
+            onValueChange={changeSort}
+            options={SORT_OPTIONS}
             aria-label="Sort signals"
-            className="rounded-md border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
-          >
-            {Object.entries(SORTS).map(([k, v]) => (
-              <option key={k} value={k}>{v.label}</option>
-            ))}
-          </select>
+            className="w-auto min-w-[11rem]"
+          />
           {q && (
             <span className="text-xs text-muted-foreground tabular-nums">
               {shownActive.length} of {active.length}
@@ -308,8 +319,8 @@ export default function SignalsPage() {
             <SignalRow
               key={rule.id}
               rule={rule}
-              toggling={toggling}
-              onToggle={(r) => toggleRule({ id: r.id, enabled: !r.enabled })}
+              toggling={toggle.isPending(rule.id)}
+              onToggle={(r) => toggle.mutate({ id: r.id, enabled: !r.enabled })}
               onEdit={(r) => setDialog({ mode: "edit", rule: r })}
               onClone={(r) => setDialog({ mode: "create", initialExpression: r.expression, initialName: `Copy of ${r.name}` })}
               onDelete={(r) => setConfirmDelete(r)}
@@ -333,7 +344,8 @@ export default function SignalsPage() {
                 <SignalRow
                   key={rule.id}
                   rule={rule}
-                  onRestore={(r) => restoreRule(r.id)}
+                  restoring={restore.isPending(rule.id)}
+                  onRestore={(r) => restore.mutate(r.id)}
                 />
               ))}
             </div>
