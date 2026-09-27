@@ -15,6 +15,7 @@ A personal assistant for finding and monitoring swing trades. It does **not** ex
 2. [Weekly Workflow](#weekly-workflow)
 3. [Planning a Trade](#planning-a-trade)
 4. [Pages](#pages)
+   - [How forms behave](#how-forms-behave)
    - [Watchlist](#watchlist)
    - [Screener](#screener)
    - [Charts](#charts)
@@ -171,6 +172,16 @@ To record a real trade, tick **Real money** in the builder. Simulated and real r
 ---
 
 ## Pages
+
+### How forms behave
+
+The same rules apply on every page:
+
+- **Fields only accept what makes sense.** A whole-number field won't take a `.`, a price field won't take letters, and nothing takes a `-` unless negatives are allowed. Pasting `1,234` just works.
+- **Red means "fix this".** A field that fails its check turns red with a very short hint under it (`Required`, `Min 1`, `Max 100`, `Not in universe`). Out-of-range numbers are allowed while you type (so you can get from `1` to `15`) and are simply flagged until fixed. "Required" appears once you've left an empty field, not the moment a form opens.
+- **Number fields** have up/down buttons (hold to repeat) and respond to the ↑/↓ keys. The scroll wheel never changes a value by accident.
+- **Dropdowns** open in a floating list that's never cut off by a dialog, grows to fit long names, and closes on Esc without closing anything else.
+- **Nothing freezes while it saves.** Other rows, buttons and pages stay usable; the thing that's busy shows a small spinner. Toggling one signal, acknowledging one alert, or adding one ticker never blocks the others. The only exception is a dialog's final **Create / Save / Open / Close** click, which locks that dialog's fields for the moment it takes to commit.
 
 ### Watchlist
 
@@ -400,6 +411,8 @@ Why the lock? Every closed trade records which signals fired at entry, by name. 
 ### Settings
 
 Your defaults. Everything here can be overridden on an individual trade.
+
+**Changes save automatically** — about a second after you stop editing — with a small *Saving… / ✓ Saved* note by the page title. There's no Save button. A value that's out of bounds turns red and isn't saved until it's fixed; if a save fails, the note says so with a **Retry** link, and anything you change in the meantime is kept and sent with the retry.
 
 **Position sizing**
 - **Account size** — used to work out how many shares to buy.

@@ -940,9 +940,17 @@ Turn the hardcoded screener signals into user-defined, named indicators built on
 
 ---
 
-### 19.5. ⬜ UX foundations (form primitives + non-blocking interaction)
+### 19.5. 🔄 UX foundations (form primitives + non-blocking interaction)
 
 An app-wide UX pass before M20 adds more UI. Every later milestone builds forms (alerts, library, strategy tagging), so the goal is one shared, well-behaved form layer and one interaction policy instead of per-page copies.
+
+**Status: built, pending live smoke test** (`docs/ux-smoke-test.md`). UX1 form layer (6d93743), UX2 interaction hooks (b3e4b99), UX3a Settings autosave + Signals (60001d6), UX3b remaining pages + UX4 guard test (347b56c). All forms use `components/ui/form`; `formGuard.test.js` blocks raw controls. Along the way: Tailwind's `dark:` variant now follows the `.dark` class (it was following the OS setting), and all Radix packages were aligned on one `dismissable-layer` copy (mixed copies broke Escape layering between dialogs and popovers). 337 backend / 160 frontend tests green.
+
+**Conventions established**
+- "Required" shows once a field has been left empty (not on first render); every other failed check shows immediately.
+- A Combobox without `allowNew` treats a non-matching value as invalid, but only once nothing matches or the field is left, so it doesn't nag mid-typing.
+- Open Radix Select lists are modal (the rest of the page is aria-hidden, and the first outside click just closes the list), like a native select. In tests, look triggers up with `{ hidden: true }` and use the `pick()` helper pattern.
+- `Button loading` = spinner and swallowed clicks at full opacity; `disabled` is only for "a click would be wrong" (invalid form, conflicting server job).
 
 **Goals (from the M19 smoke-test review)**
 1. Inputs accept only valid keystrokes (e.g. a whole-number weight field can't take a `.`).
