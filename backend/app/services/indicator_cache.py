@@ -3,7 +3,7 @@ Upsert computed indicator snapshots into indicator_snapshots table.
 """
 
 import logging
-from app.database import get_client
+from app.database import get_client, rpc_per_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -29,27 +29,22 @@ def get_latest_snapshots(symbols: list[str]) -> list[dict]:
     """
     Return the most-recent indicator snapshot for each requested symbol.
     Symbols with no snapshot are omitted from the result.
+
+    Reduced in Postgres (one row per symbol, migration 004): fetching history
+    and de-duplicating here hit PostgREST's 1000-row cap, which silently
+    dropped symbols whose newest snapshot wasn't among the globally newest rows.
     """
     if not symbols:
         return []
+    return rpc_per_symbol("latest_indicator_snapshots", symbols)
 
-    result = (
-        get_client()
-        .table("indicator_snapshots")
-        .select("*")
-        .in_("symbol", symbols)
-        .order("date", desc=True)
-        .execute()
-    )
 
-    seen: set[str] = set()
-    rows: list[dict] = []
-    for row in result.data:
-        sym = row["symbol"]
-        if sym not in seen:
-            seen.add(sym)
-            rows.append(row)
-    return rows
+def get_prior_snapshots(symbols: list[str]) -> dict[str, dict]:
+    """{SYMBOL: second-newest snapshot} (crossover detection); symbols with fewer
+    than two snapshots are omitted. One row per symbol, reduced in Postgres."""
+    if not symbols:
+        return {}
+    return {r["symbol"]: r for r in rpc_per_symbol("prior_indicator_snapshots", symbols)}
 
 
 def upsert_snapshots(snapshots: list[dict]) -> int:

@@ -15,7 +15,7 @@ import logging
 import requests
 from pathlib import Path
 import pandas as pd
-from app.database import get_client
+from app.database import RPC_SYMBOL_CHUNK, get_client
 
 logger = logging.getLogger(__name__)
 
@@ -97,33 +97,19 @@ def sync_universe() -> int:
 
 def update_ticker_metadata(symbols: list[str]) -> None:
     """
-    For each symbol, read recent ohlcv_cache bars and update:
+    For each symbol, from its recent ohlcv_cache bars, update:
       - last_price  = most recent close
       - avg_volume  = mean of last 20 days' volume
 
     Only updates rows that already exist in `tickers`.
     Skips symbols with no cached OHLCV data.
+
+    Done in Postgres (migration 004's `refresh_ticker_metadata`): one statement
+    per 500 symbols instead of two round trips per ticker.
     """
-    for symbol in symbols:
-        result = (
-            get_client()
-            .table("ohlcv_cache")
-            .select("close,volume")
-            .eq("symbol", symbol)
-            .order("date", desc=True)
-            .limit(20)
-            .execute()
-        )
-        bars = result.data
-        if not bars:
-            continue
-
-        last_price = float(bars[0]["close"])
-        avg_volume = int(sum(b["volume"] for b in bars) / len(bars))
-
-        get_client().table("tickers").update({
-            "last_price": last_price,
-            "avg_volume": avg_volume,
-        }).eq("symbol", symbol).execute()
-
-    logger.info("Updated metadata for %d tickers", len(symbols))
+    syms = sorted({s.upper() for s in symbols if s})
+    updated = 0
+    for i in range(0, len(syms), RPC_SYMBOL_CHUNK):
+        chunk = syms[i:i + RPC_SYMBOL_CHUNK]
+        updated += get_client().rpc("refresh_ticker_metadata", {"p_symbols": chunk}).execute().data or 0
+    logger.info("Updated metadata for %d of %d tickers", updated, len(syms))

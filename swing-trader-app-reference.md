@@ -1032,7 +1032,7 @@ Python call sites switch to these behind their existing function signatures, so 
 
 **Deliberate staleness rule (replaces accidental truncation):** screener and universe-preview scoring skip snapshots older than `MAX_SNAPSHOT_AGE_DAYS = 10` (one missed weekly refresh of tolerance) and log the count. The Watchlist still shows old snapshots, with their date.
 
-**Also noted:** CTRA, HOLX and SEE have had no fresh data since April, EA/AVB/EQR since August, and CMA has never had a snapshot. That's a universe-maintenance issue (delisted, renamed or failing fetches), tracked separately and not part of M20.
+**Also noted:** CTRA, HOLX and SEE have had no fresh data since April, EA/AVB/EQR since August, and CMA has never had a snapshot. That's a universe-maintenance issue (delisted, renamed or failing fetches), tracked in M23 as **Universe grooming** and not part of M20.
 
 #### Locked decisions
 
@@ -1210,6 +1210,13 @@ A dedicated page for browsing and managing the `tickers` table. Key ideas:
 - Ticker detail: basic info panel per symbol (sector, avg volume, last price, data freshness)
 - Out-of-universe lookup: if a symbol isn't in `tickers`, hit a free public API (e.g. Yahoo Finance or Twelve Data) to fetch basic info and offer an "Add to Universe" flow
 - Full design TBD when we're ready to build
+
+#### Universe grooming (scheduled)
+An occasional job (e.g. monthly, alongside `sync_universe`) that keeps `tickers` healthy:
+- **Retire dead symbols:** flag or remove tickers with no new bars for N trading days, repeated fetch failures, or no indicator snapshot at all (the 2026-09-27 audit found CTRA/HOLX/SEE stale since April, EA/AVB/EQR since August, CMA never computed). Prefer a soft `retired_at` over deletes, since `watchlist` and positions reference symbols.
+- **Handle renames/delistings:** surface a symbol that disappears from the source index list so the user can map or drop it; never silently drop a watchlisted or held symbol.
+- **Add new live tickers:** pick up index additions from the source lists, fetch their history, and compute snapshots before they're eligible for Pass 1.
+- **Report:** a short summary (retired / added / needs attention) in the admin UI or as an alert.
 
 #### LLM Integrations
 - **News summarizer**: scan headlines for watchlist tickers and surface relevant events (earnings, macro, geopolitical) that could affect price — summarized by an LLM

@@ -91,30 +91,28 @@ def test_is_cache_fresh_returns_false_for_old_bar():
 # ---------------------------------------------------------------------------
 
 def test_get_latest_closes_returns_newest_close_per_symbol():
-    # Rows come back date-descending; the first row seen per symbol is the newest.
+    # One row per symbol, reduced in Postgres (ohlcv_summary with window=1).
     rows = [
-        {"symbol": "AAPL", "close": 213.49, "date": "2026-07-15"},
-        {"symbol": "AAPL", "close": 210.00, "date": "2026-07-14"},
-        {"symbol": "MSFT", "close": 425.00, "date": "2026-07-15"},
+        {"symbol": "AAPL", "last_date": "2026-07-15", "last_close": "213.4900", "bar_count": 1,
+         "vol_3d": 1, "vol_avg": 1, "last_fetched_at": None},
+        {"symbol": "MSFT", "last_date": "2026-07-15", "last_close": 425.0, "bar_count": 1,
+         "vol_3d": 1, "vol_avg": 1, "last_fetched_at": None},
     ]
     mock_client = MagicMock()
-    (mock_client.table.return_value
-                .select.return_value
-                .in_.return_value
-                .order.return_value
-                .execute.return_value.data) = rows
+    mock_client.rpc.return_value.execute.return_value.data = rows
 
-    with patch("app.services.ohlcv_cache.get_client", return_value=mock_client):
-        closes = get_latest_closes(["AAPL", "MSFT"])
+    with patch("app.database.get_client", return_value=mock_client):
+        closes = get_latest_closes(["aapl", "MSFT"])
 
     assert closes == {"AAPL": 213.49, "MSFT": 425.00}
+    mock_client.rpc.assert_called_once_with("ohlcv_summary", {"p_symbols": ["AAPL", "MSFT"], "p_window": 1})
 
 
 def test_get_latest_closes_empty_input_makes_no_query():
     mock_client = MagicMock()
-    with patch("app.services.ohlcv_cache.get_client", return_value=mock_client):
+    with patch("app.database.get_client", return_value=mock_client):
         assert get_latest_closes([]) == {}
-    mock_client.table.assert_not_called()
+    mock_client.rpc.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

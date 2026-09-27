@@ -5,6 +5,8 @@ the app.
 Public API:
     is_cache_fresh(symbol) -> bool
     bulk_check_freshness(symbols) -> dict[str, bool]
+    get_ohlcv_summary(symbols, window) -> dict[str, dict]  (one row per symbol)
+    get_latest_closes(symbols) -> dict[str, float]
     upsert_bars(bars)          -> int (rows upserted)
     get_cached_bars(symbol)    -> list[dict]
     latest_fetch_at(symbols)   -> str | None (newest fetched_at across symbols)
@@ -12,7 +14,7 @@ Public API:
 
 import logging
 from datetime import date, datetime, timedelta, timezone
-from app.database import get_client
+from app.database import get_client, rpc_per_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +55,41 @@ def is_cache_fresh(symbol: str) -> bool:
 
 def bulk_check_freshness(symbols: list[str]) -> dict[str, bool]:
     """
-    Return a mapping of symbol → is_cache_fresh for all requested symbols.
-    Uses a single query per symbol (Supabase free tier has no GROUP BY max
-    support via the REST API).
+    Return a mapping of symbol → is_cache_fresh for all requested symbols, in
+    one round trip per 500 symbols. Keys keep the caller's spelling.
     """
-    return {sym: is_cache_fresh(sym) for sym in symbols}
+    last = {s: r["last_date"] for s, r in get_ohlcv_summary(symbols, window=1).items()}
+    cutoff = _latest_trading_day() - timedelta(days=_STALE_THRESHOLD_DAYS)
+    return {
+        sym: sym.upper() in last and date.fromisoformat(last[sym.upper()]) >= cutoff
+        for sym in symbols
+    }
+
+
+def get_ohlcv_summary(symbols: list[str], window: int = 20) -> dict[str, dict]:
+    """
+    {SYMBOL: summary} over each symbol's trailing `window` bars, reduced in
+    Postgres (migration 004's `ohlcv_summary`) so the 1000-row response cap
+    can't truncate it. Summary keys: last_date (ISO str), last_close, bar_count,
+    vol_3d, vol_avg (floats), last_fetched_at. Symbols with no bars are omitted.
+    """
+    if not symbols:
+        return {}
+    out: dict[str, dict] = {}
+    for row in rpc_per_symbol("ohlcv_summary", symbols, p_window=window):
+        out[row["symbol"]] = {
+            "last_date":       row["last_date"],
+            "last_close":      _float(row["last_close"]),
+            "bar_count":       row["bar_count"],
+            "vol_3d":          _float(row["vol_3d"]),
+            "vol_avg":         _float(row["vol_avg"]),
+            "last_fetched_at": row["last_fetched_at"],
+        }
+    return out
+
+
+def _float(v) -> float | None:
+    return float(v) if v is not None else None
 
 
 def upsert_bars(bars: list[dict]) -> int:
@@ -105,31 +137,13 @@ def get_cached_bars(symbol: str, limit: int = 200) -> list[dict]:
 
 def get_latest_closes(symbols: list[str]) -> dict[str, float]:
     """
-    Return {symbol: latest close} for the requested symbols, in a single query.
+    Return {symbol: latest close} for the requested symbols, one row per symbol.
 
     Symbols with no cached bars are omitted. Used wherever the app needs a current
     price for arbitrary symbols — the watchlist price column, entry prefill in the
     exit builder, exit prefill on close.
     """
-    if not symbols:
-        return {}
-
-    upper = [s.upper() for s in symbols]
-    result = (
-        get_client()
-        .table("ohlcv_cache")
-        .select("symbol,close,date")
-        .in_("symbol", upper)
-        .order("date", desc=True)
-        .execute()
-    )
-
-    closes: dict[str, float] = {}
-    for row in result.data:
-        sym = row["symbol"]
-        if sym not in closes:        # first row per symbol is the newest (date desc)
-            closes[sym] = float(row["close"])
-    return closes
+    return {s: r["last_close"] for s, r in get_ohlcv_summary(symbols, window=1).items()}
 
 
 def latest_fetch_at(symbols: list[str], lookback_days: int = 10) -> str | None:

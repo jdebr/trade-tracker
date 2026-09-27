@@ -9,7 +9,7 @@ Criteria:
 3. save_results inserts the right rows; get_latest_results retrieves them
 4. run_screener orchestrates pass1 → pass2 → save in order (no data fetching)
 5. run_screener returns (datetime, []) immediately when pass1 has no survivors
-6. _get_recent_volumes issues a single bulk query (not one per symbol)
+6. Pass 2 and the universe preview ignore stale snapshots (MAX_SNAPSHOT_AGE_DAYS)
 7. GET /screener/results returns 200 [] (not 404) when no runs exist yet
 """
 
@@ -24,7 +24,7 @@ from app.services.screener import (
     save_results,
     get_latest_results,
     run_screener,
-    _get_recent_volumes,
+    MAX_SNAPSHOT_AGE_DAYS,
 )
 
 
@@ -280,39 +280,18 @@ def test_run_screener_returns_empty_when_no_pass1_survivors():
 
 
 # ---------------------------------------------------------------------------
-# Criterion 6: _get_recent_volumes issues a single bulk query
+# Criterion 6: scoring asks for the staleness cutoff
 # ---------------------------------------------------------------------------
 
-def test_get_recent_volumes_uses_single_bulk_query():
-    """
-    _get_recent_volumes must issue ONE .in_() query for all symbols rather than
-    one round-trip per symbol. Results are grouped by symbol in Python.
-    """
-    mock_client = MagicMock()
-    (mock_client.table.return_value
-                .select.return_value
-                .in_.return_value
-                .order.return_value
-                .limit.return_value
-                .execute.return_value.data) = [
-        {"symbol": "AAPL", "date": "2026-04-01", "close": 150.0, "volume": 2_000_000},
-        {"symbol": "AAPL", "date": "2026-03-31", "close": 148.0, "volume": 1_800_000},
-        {"symbol": "AAPL", "date": "2026-03-28", "close": 147.0, "volume": 1_500_000},
-        {"symbol": "MSFT", "date": "2026-04-01", "close": 420.0, "volume": 3_000_000},
-        {"symbol": "MSFT", "date": "2026-03-31", "close": 418.0, "volume": 2_800_000},
-    ]
-
-    with patch("app.services.screener.get_client", return_value=mock_client):
-        result = _get_recent_volumes(["AAPL", "MSFT"])
-
-    # Single .in_() call — not one per symbol
-    assert mock_client.table.return_value.select.return_value.in_.call_count == 1
-
-    assert "AAPL" in result
-    assert "MSFT" in result
-    # vol_3d for AAPL: avg of first 3 bars = (2M + 1.8M + 1.5M) / 3
-    assert result["AAPL"]["vol_3d"] == pytest.approx((2_000_000 + 1_800_000 + 1_500_000) / 3)
-    assert result["AAPL"]["last_close"] == pytest.approx(150.0)
+def test_pass2_and_preview_ignore_stale_snapshots():
+    """Pass 2 and the universe preview both build contexts with the age cutoff,
+    so a ticker whose data stopped updating isn't scored on old values."""
+    from app.services import screener
+    with patch.object(screener.sr, "get_enabled_rules", return_value=[]),          patch.object(screener, "build_feature_contexts", return_value={}) as bfc,          patch.object(screener, "pass1_filter", return_value=["AAPL"]):
+        pass2_score(["AAPL"])
+        screener.preview_rule_over_universe({"var": "bb_squeeze"})
+    for c in bfc.call_args_list:
+        assert c.kwargs["max_snapshot_age_days"] == MAX_SNAPSHOT_AGE_DAYS
 
 
 # ---------------------------------------------------------------------------

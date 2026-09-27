@@ -27,10 +27,10 @@ from datetime import date, datetime, timezone
 
 from app.database import get_client
 from app.services import positions as pos_svc
-from app.services.indicator_cache import upsert_snapshots
+from app.services.indicator_cache import get_prior_snapshots, upsert_snapshots
 from app.services.indicators import compute_indicators
 from app.services.market_data import fetch_ohlcv
-from app.services.ohlcv_cache import get_cached_bars, is_cache_fresh, upsert_bars
+from app.services.ohlcv_cache import bulk_check_freshness, get_ohlcv_summary, upsert_bars
 from app.services.position_monitor import run_position_monitor
 
 logger = logging.getLogger(__name__)
@@ -88,8 +88,9 @@ def _get_watchlist_symbols() -> list[str]:
 def _fetch_ohlcv_for_symbols(symbols: list[str], result: ScanResult) -> None:
     """Fetch + upsert OHLCV for stale symbols. Mutates result in place."""
     all_bars: list[dict] = []
+    freshness = bulk_check_freshness(symbols)
     for symbol in symbols:
-        if is_cache_fresh(symbol):
+        if freshness[symbol]:
             result.ohlcv_cached += 1
             continue
         try:
@@ -131,20 +132,8 @@ def _get_prior_snapshots(symbols: list[str]) -> dict[str, dict | None]:
     Used for crossover detection (need two consecutive bars).
     Returns {symbol: snapshot_dict | None}.
     """
-    priors: dict[str, dict | None] = {}
-    for symbol in symbols:
-        res = (
-            get_client()
-            .table("indicator_snapshots")
-            .select("date,macd_hist,ema_8,ema_21")
-            .eq("symbol", symbol)
-            .order("date", desc=True)
-            .limit(2)
-            .execute()
-        )
-        rows = res.data
-        priors[symbol] = rows[1] if len(rows) >= 2 else None
-    return priors
+    found = get_prior_snapshots(symbols)
+    return {symbol: found.get(symbol.upper()) for symbol in symbols}
 
 
 def _get_market_data(symbols: list[str]) -> dict[str, dict]:
@@ -152,21 +141,16 @@ def _get_market_data(symbols: list[str]) -> dict[str, dict]:
     Return {symbol: {vol_3d, vol_20d, last_close}} from ohlcv_cache.
     Symbols with insufficient bars are omitted.
     """
-    data: dict[str, dict] = {}
-    for symbol in symbols:
-        bars = get_cached_bars(symbol, limit=20)  # oldest → newest
-        if not bars:
-            continue
-        volumes   = [b["volume"] for b in bars]
-        last_close = float(bars[-1]["close"])
-        vol_3d    = sum(volumes[-3:]) / min(3, len(volumes))
-        vol_20d   = sum(volumes)      / len(volumes)
-        data[symbol] = {
-            "vol_3d":     vol_3d,
-            "vol_20d":    vol_20d,
-            "last_close": last_close,
+    summary = get_ohlcv_summary(symbols, window=20)
+    return {
+        symbol: {
+            "vol_3d":     s["vol_3d"],
+            "vol_20d":    s["vol_avg"],
+            "last_close": s["last_close"],
         }
-    return data
+        for symbol in symbols
+        if (s := summary.get(symbol.upper()))
+    }
 
 
 def _get_existing_alerts_today(

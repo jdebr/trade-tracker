@@ -20,11 +20,10 @@ Public API:
 """
 
 import logging
-from collections import defaultdict
+from datetime import date, timedelta
 
-from app.database import get_client
 from app.services.indicator_cache import get_latest_snapshots
-from app.services.ohlcv_cache import get_cached_bars
+from app.services.ohlcv_cache import get_cached_bars, get_ohlcv_summary
 
 logger = logging.getLogger(__name__)
 
@@ -96,27 +95,35 @@ def _coerce(name: str, value):
         return None
 
 
-def _assemble(snapshot: dict, bars: list[dict]) -> dict:
-    """Build the flat variable dict from one snapshot row + OHLCV bars (oldest→newest).
+def _bar_stats(bars: list[dict]) -> dict:
+    """close / vol_3d / vol_20d from OHLCV bars (oldest→newest).
 
     Volume averages always use the trailing `_VOL_WINDOW` bars regardless of how many
     are supplied — callers may pass more (e.g. the 60 bars a MarketContext loads), and
     vol_20d must remain a 20-day average to match the screener.
     """
-    ctx = {name: _coerce(name, snapshot.get(name)) for name in _SNAPSHOT_FIELDS}
-
-    close = float(bars[-1]["close"]) if bars else None
     window = bars[-_VOL_WINDOW:]
-    vol_3d = vol_20d = None
-    if window:
-        vols = [b["volume"] for b in window]
-        vol_3d = sum(vols[-3:]) / min(3, len(vols))
-        vol_20d = sum(vols) / len(vols)
+    if not window:
+        return {"close": None, "vol_3d": None, "vol_20d": None}
+    vols = [b["volume"] for b in window]
+    return {
+        "close": float(window[-1]["close"]),
+        "vol_3d": sum(vols[-3:]) / min(3, len(vols)),
+        "vol_20d": sum(vols) / len(vols),
+    }
 
-    ctx["close"] = close
-    ctx["vol_3d"] = vol_3d
-    ctx["vol_20d"] = vol_20d
+
+def _assemble_stats(snapshot: dict, stats: dict) -> dict:
+    ctx = {name: _coerce(name, snapshot.get(name)) for name in _SNAPSHOT_FIELDS}
+    ctx["close"] = stats.get("close")
+    ctx["vol_3d"] = stats.get("vol_3d")
+    ctx["vol_20d"] = stats.get("vol_20d")
     return ctx
+
+
+def _assemble(snapshot: dict, bars: list[dict]) -> dict:
+    """Build the flat variable dict from one snapshot row + OHLCV bars (oldest→newest)."""
+    return _assemble_stats(snapshot, _bar_stats(bars))
 
 
 def build_feature_context(symbol: str) -> dict:
@@ -141,41 +148,44 @@ def snapshot_present(features: dict) -> bool:
     return any(features.get(name) is not None for name in _SNAPSHOT_FIELDS)
 
 
-def _recent_bars_by_symbol(symbols: list[str]) -> dict[str, list[dict]]:
-    """Bulk-fetch up to the last `_VOL_WINDOW` bars per symbol (oldest→newest)."""
-    if not symbols:
-        return {}
-    # Cap the fetch at ~_VOL_WINDOW bars per symbol. Without this, PostgREST's
-    # default 1000-row ceiling would silently return only the globally-newest
-    # rows (≈1000/N bars per symbol on a large scan), quietly corrupting the
-    # volume averages. Mirrors screener._bulk_volume_averages.
-    result = (
-        get_client()
-        .table("ohlcv_cache")
-        .select("symbol,date,close,volume")
-        .in_("symbol", symbols)
-        .order("date", desc=True)
-        .limit(len(symbols) * _VOL_WINDOW)
-        .execute()
-    ).data
-
-    grouped: dict[str, list[dict]] = defaultdict(list)
-    for row in result:  # newest first
-        sym = row["symbol"]
-        if len(grouped[sym]) < _VOL_WINDOW:
-            grouped[sym].append(row)
-    # Reverse to oldest→newest to match get_cached_bars.
-    return {sym: list(reversed(rows)) for sym, rows in grouped.items()}
+def _summary_stats(summary: dict | None) -> dict:
+    """close / vol_3d / vol_20d from one `get_ohlcv_summary` row."""
+    if not summary:
+        return {"close": None, "vol_3d": None, "vol_20d": None}
+    return {"close": summary["last_close"], "vol_3d": summary["vol_3d"], "vol_20d": summary["vol_avg"]}
 
 
-def build_feature_contexts(symbols: list[str]) -> dict[str, dict]:
-    """Assemble feature dicts for many symbols with one snapshot + one OHLCV query."""
+def _is_stale(snapshot: dict, max_age_days: int | None) -> bool:
+    if max_age_days is None or not snapshot.get("date"):
+        return False
+    return date.fromisoformat(snapshot["date"]) < date.today() - timedelta(days=max_age_days)
+
+
+def build_feature_contexts(
+    symbols: list[str], max_snapshot_age_days: int | None = None
+) -> dict[str, dict]:
+    """
+    Assemble feature dicts for many symbols with one snapshot + one OHLCV-summary
+    call (each returns one row per symbol, so neither can be truncated).
+
+    With `max_snapshot_age_days`, snapshots older than that are treated as missing
+    (all snapshot variables None → `snapshot_present` is False), so scoring skips
+    tickers whose data has stopped updating instead of scoring them on old values.
+    """
     syms = [s.upper() for s in symbols]
     if not syms:
         return {}
     snaps = {s["symbol"]: s for s in get_latest_snapshots(syms)}
-    bars_by_symbol = _recent_bars_by_symbol(syms)
+    stale = [sym for sym, snap in snaps.items() if _is_stale(snap, max_snapshot_age_days)]
+    for sym in stale:
+        del snaps[sym]
+    if stale:
+        logger.info(
+            "Ignoring %d snapshot(s) older than %d days: %s",
+            len(stale), max_snapshot_age_days, ", ".join(sorted(stale)),
+        )
+    summary = get_ohlcv_summary(syms, window=_VOL_WINDOW)
     return {
-        sym: _assemble(snaps.get(sym, {}), bars_by_symbol.get(sym, []))
+        sym: _assemble_stats(snaps.get(sym, {}), _summary_stats(summary.get(sym)))
         for sym in syms
     }

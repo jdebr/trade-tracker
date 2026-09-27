@@ -119,56 +119,44 @@ def test_build_feature_context_no_data():
     assert all(v is None for v in ctx.values())
 
 
+def _summary(close, vol_3d, vol_avg):
+    return {"last_date": "2026-07-03", "last_close": close, "bar_count": 20,
+            "vol_3d": vol_3d, "vol_avg": vol_avg, "last_fetched_at": None}
+
+
 def test_build_feature_contexts_batched():
     snaps = [dict(FULL_SNAPSHOT, symbol="AAPL"), dict(FULL_SNAPSHOT, symbol="MSFT", rsi_14=60.0)]
-    bars_map = {"AAPL": BARS, "MSFT": BARS[:5]}
-    with patch.object(fc, "get_latest_snapshots", return_value=snaps), \
-         patch.object(fc, "_recent_bars_by_symbol", return_value=bars_map):
+    summary = {"AAPL": _summary(119.0, 3e6, 2e6), "MSFT": _summary(104.0, 1e6, 1.5e6)}
+    with patch.object(fc, "get_latest_snapshots", return_value=snaps),          patch.object(fc, "get_ohlcv_summary", return_value=summary) as summ:
         contexts = build_feature_contexts(["aapl", "msft"])
+    summ.assert_called_once_with(["AAPL", "MSFT"], window=fc._VOL_WINDOW)
     assert set(contexts.keys()) == {"AAPL", "MSFT"}
     assert contexts["AAPL"]["rsi_14"] == 30.0
     assert contexts["MSFT"]["rsi_14"] == 60.0
-    assert contexts["MSFT"]["close"] == 104.0  # newest of first 5 bars (100 + 4)
+    assert contexts["MSFT"]["close"] == 104.0
+    assert contexts["AAPL"]["vol_3d"] == 3e6
+    assert contexts["AAPL"]["vol_20d"] == 2e6
+
+
+def test_build_feature_contexts_symbol_without_bars():
+    with patch.object(fc, "get_latest_snapshots", return_value=[dict(FULL_SNAPSHOT, symbol="AAPL")]),          patch.object(fc, "get_ohlcv_summary", return_value={}):
+        ctx = build_feature_contexts(["AAPL"])["AAPL"]
+    assert ctx["rsi_14"] == 30.0
+    assert ctx["close"] is None and ctx["vol_20d"] is None
+
+
+def test_build_feature_contexts_drops_stale_snapshots_only_when_asked():
+    from datetime import date, timedelta
+    old = (date.today() - timedelta(days=30)).isoformat()
+    new = date.today().isoformat()
+    snaps = [dict(FULL_SNAPSHOT, symbol="OLD", date=old), dict(FULL_SNAPSHOT, symbol="NEW", date=new)]
+    with patch.object(fc, "get_latest_snapshots", return_value=snaps),          patch.object(fc, "get_ohlcv_summary", return_value={}):
+        strict = build_feature_contexts(["OLD", "NEW"], max_snapshot_age_days=10)
+        lenient = build_feature_contexts(["OLD", "NEW"])
+    assert not fc.snapshot_present(strict["OLD"])
+    assert fc.snapshot_present(strict["NEW"])
+    assert fc.snapshot_present(lenient["OLD"])
 
 
 def test_build_feature_contexts_empty():
     assert build_feature_contexts([]) == {}
-
-
-# ---------------------------------------------------------------------------
-# _recent_bars_by_symbol — the bulk OHLCV fetch (must cap the query)
-# ---------------------------------------------------------------------------
-
-def _fake_client(rows):
-    from unittest.mock import MagicMock
-    chain = MagicMock()
-    for m in ("select", "in_", "order", "limit"):
-        getattr(chain, m).return_value = chain
-    chain.execute.return_value = MagicMock(data=rows)
-    client = MagicMock()
-    client.table.return_value = chain
-    return client, chain
-
-
-def test_recent_bars_applies_per_symbol_limit():
-    # Without the cap, PostgREST's 1000-row ceiling silently corrupts volume
-    # averages on a large scan. Assert the query is bounded to N * _VOL_WINDOW.
-    client, chain = _fake_client([])
-    with patch.object(fc, "get_client", return_value=client):
-        fc._recent_bars_by_symbol(["AAPL", "MSFT", "TSLA"])
-    chain.limit.assert_called_once_with(3 * fc._VOL_WINDOW)
-
-
-def test_recent_bars_groups_and_reverses_to_oldest_first():
-    # Input arrives newest-first (date desc); output must be oldest->newest per symbol.
-    rows = [
-        {"symbol": "AAPL", "date": "2026-07-03", "close": 3, "volume": 30},
-        {"symbol": "AAPL", "date": "2026-07-02", "close": 2, "volume": 20},
-        {"symbol": "AAPL", "date": "2026-07-01", "close": 1, "volume": 10},
-        {"symbol": "MSFT", "date": "2026-07-03", "close": 9, "volume": 90},
-    ]
-    client, _ = _fake_client(rows)
-    with patch.object(fc, "get_client", return_value=client):
-        out = fc._recent_bars_by_symbol(["AAPL", "MSFT"])
-    assert [b["close"] for b in out["AAPL"]] == [1, 2, 3]  # oldest -> newest
-    assert [b["close"] for b in out["MSFT"]] == [9]

@@ -25,7 +25,6 @@ Public API:
 """
 
 import logging
-from collections import defaultdict
 from datetime import datetime, timezone
 from app.database import get_client
 from app.services.feature_context import build_feature_contexts, snapshot_present
@@ -48,6 +47,12 @@ MAX_PRICE      = 500.0
 
 RSI_LOW  = 35.0
 RSI_HIGH = 65.0
+
+# Screener and universe-preview scoring ignore indicator snapshots older than
+# this (calendar days): one missed weekly refresh of tolerance. Tickers whose
+# data has stopped updating (delisted, renamed, failing fetches) drop out
+# explicitly rather than being scored on old values.
+MAX_SNAPSHOT_AGE_DAYS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -76,57 +81,6 @@ def pass1_filter() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Pass 2 helpers
-# ---------------------------------------------------------------------------
-
-def _get_recent_volumes(symbols: list[str]) -> dict[str, dict]:
-    """
-    For each symbol return avg of last 3d and last 20d volumes from ohlcv_cache.
-    Result: {symbol: {"vol_3d": float, "vol_20d": float, "last_close": float}}
-
-    Uses a single bulk query (.in_()) and groups by symbol in Python,
-    instead of one round-trip per symbol.
-    """
-    if not symbols:
-        return {}
-
-    # Fetch up to 20 bars per symbol in one query — order by date desc so we
-    # get the most-recent bars first.
-    max_rows = len(symbols) * 20
-    result = (
-        get_client()
-        .table("ohlcv_cache")
-        .select("symbol,volume,close,date")
-        .in_("symbol", symbols)
-        .order("date", desc=True)
-        .limit(max_rows)
-        .execute()
-    )
-
-    # Group by symbol, keeping at most 20 rows each (already desc by date).
-    grouped: dict[str, list] = defaultdict(list)
-    for row in result.data:
-        sym = row["symbol"]
-        if len(grouped[sym]) < 20:
-            grouped[sym].append(row)
-
-    volumes: dict[str, dict] = {}
-    for symbol, bars in grouped.items():
-        if not bars:
-            continue
-        vols = [b["volume"] for b in bars]
-        last_close = float(bars[0]["close"])
-        vol_3d  = sum(vols[:3]) / min(3, len(vols))
-        vol_20d = sum(vols)     / len(vols)
-        volumes[symbol] = {
-            "vol_3d":     vol_3d,
-            "vol_20d":    vol_20d,
-            "last_close": last_close,
-        }
-    return volumes
-
-
-# ---------------------------------------------------------------------------
 # Pass 2
 # ---------------------------------------------------------------------------
 
@@ -141,7 +95,7 @@ def pass2_score(symbols: list[str]) -> list[dict]:
     API response model and screener_results columns keep working unchanged.
     """
     rules = sr.get_enabled_rules()
-    contexts = build_feature_contexts(symbols)
+    contexts = build_feature_contexts(symbols, max_snapshot_age_days=MAX_SNAPSHOT_AGE_DAYS)
 
     candidates = []
     skipped_no_snap = 0
@@ -149,7 +103,7 @@ def pass2_score(symbols: list[str]) -> list[dict]:
         features = contexts.get(symbol) or {}
         if not snapshot_present(features):
             skipped_no_snap += 1
-            logger.debug("%s: no indicator snapshot — skipping Pass 2", symbol)
+            logger.debug("%s: no current indicator snapshot — skipping Pass 2", symbol)
             continue
 
         res = sr.evaluate_signals(features, rules)
@@ -172,7 +126,7 @@ def pass2_score(symbols: list[str]) -> list[dict]:
 
     top_score = max((c["signal_score"] for c in candidates), default=0)
     logger.info(
-        "Pass 2 scoring: %d symbols — %d had no snapshot, %d scored (top score: %d)",
+        "Pass 2 scoring: %d symbols — %d had no current snapshot, %d scored (top score: %d)",
         len(symbols), skipped_no_snap, len(candidates), top_score,
     )
 
@@ -222,7 +176,7 @@ def preview_rule_over_universe(rule: dict) -> dict:
     Caller is expected to have validated the rule already.
     """
     symbols = pass1_filter()
-    contexts = build_feature_contexts(symbols)
+    contexts = build_feature_contexts(symbols, max_snapshot_age_days=MAX_SNAPSHOT_AGE_DAYS)
     vars_used = sorted(extract_variables(rule))
 
     matched: list[str] = []
