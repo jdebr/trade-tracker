@@ -419,6 +419,17 @@ export const handlers = [
     HttpResponse.json(MOCK_WATCHLIST)
   ),
 
+  // Live signal scores for the watchlist (JPM: no indicator data yet).
+  http.get(`${API_URL}/screener/scores`, () =>
+    HttpResponse.json({
+      AAPL: { signal_score: 3, max_signal_score: 5, signal_score_normalized: 0.6,
+              signals: { bb_squeeze: true, rsi_in_range: true, above_ema50: false, volume_expansion: false, momentum_pop: true } },
+      MSFT: { signal_score: 0, max_signal_score: 5, signal_score_normalized: 0,
+              signals: { bb_squeeze: false, rsi_in_range: false, above_ema50: false, volume_expansion: false, momentum_pop: false } },
+      JPM: null,
+    })
+  ),
+
   http.get(`${API_URL}/indicators/snapshots`, () =>
     HttpResponse.json(MOCK_SNAPSHOTS)
   ),

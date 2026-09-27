@@ -3,29 +3,19 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, CheckCircle, Target, Briefcase } from "lucide-react"
 import { api } from "@/lib/api"
 import { useKeyedMutation } from "@/lib/useKeyedMutation"
+import { screenerResultsQuery } from "@/lib/screenerQuery"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip } from "@/components/ui/Tooltip"
 import ExitPlanDialog from "@/components/ExitPlanDialog"
+import { ScoreBadge } from "@/components/SignalScore"
 import { INDICATORS } from "@/lib/indicators"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function ScoreBadge({ score, max, normalized }) {
-  // Colour by the normalized fraction so the badge stays meaningful as the signal
-  // set (and therefore `max`) grows across screener eras.
-  const frac = normalized != null ? normalized : max ? score / max : 0
-  const variant = frac >= 0.6 ? "bull" : frac > 0 ? "secondary" : "neutral"
-  return (
-    <Badge variant={variant} aria-label={`Signal score ${score} of ${max}`}>
-      {score}/{max}
-    </Badge>
-  )
-}
 
 // A compact "3/4 · 75%" score cell: raw achieved/max plus the cross-era normalized
 // percentage when the row carries one.
@@ -483,8 +473,7 @@ export default function ScreenerPage() {
 
   // ---- Existing results ----
   const { data: results, isLoading, isError } = useQuery({
-    queryKey: ["screener-results"],
-    queryFn: () => api.get("/screener/results"),
+    ...screenerResultsQuery,
     retry: false,
   })
 
@@ -686,7 +675,8 @@ export default function ScreenerPage() {
           role="status"
           className="mt-4 rounded-lg border border-border bg-muted/50 px-4 py-8 text-center text-muted-foreground"
         >
-          No screener results yet — the screener runs automatically every Saturday night.
+          No tickers fired an active signal in the latest run — or the screener hasn&rsquo;t run
+          yet (it runs automatically every Saturday night).
         </div>
       )}
 
@@ -696,6 +686,10 @@ export default function ScreenerPage() {
 
       {results && results.length > 0 && (
         <>
+          <p className="mb-2 text-xs text-muted-foreground">
+            {results.length} ticker{results.length === 1 ? "" : "s"} fired at least one active signal
+            {" "}(tickers scoring 0 are hidden).
+          </p>
           <ResultsTable
             rows={results}
             signalCols={signalCols}

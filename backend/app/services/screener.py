@@ -183,6 +183,25 @@ def pass2_score(symbols: list[str]) -> list[dict]:
     return candidates
 
 
+def score_symbols(symbols: list[str]) -> dict[str, dict | None]:
+    """
+    Score arbitrary symbols against the *current* enabled signals, live from the
+    cache — no persistence, no data fetch. Same features + evaluator as Pass 2,
+    so a watchlist row's score matches what a screener run would give it now.
+    Symbols without an indicator snapshot map to None.
+    """
+    symbols = sorted({s.upper() for s in symbols if s})
+    if not symbols:
+        return {}
+    rules = sr.get_enabled_rules()
+    contexts = build_feature_contexts(symbols)
+    out: dict[str, dict | None] = {}
+    for sym in symbols:
+        features = contexts.get(sym) or {}
+        out[sym] = sr.evaluate_signals(features, rules) if snapshot_present(features) else None
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Rule preview against the full universe (builder aid, no persistence)
 # ---------------------------------------------------------------------------
@@ -275,7 +294,7 @@ def save_results(candidates: list[dict], run_at: datetime) -> int:
     return count
 
 
-def get_latest_results(limit: int = 50) -> list[dict]:
+def get_latest_results(limit: int = 50, min_score: int = 0) -> list[dict]:
     """Return the most recent run's results, ordered by rank."""
     latest = (
         get_client()
@@ -289,25 +308,26 @@ def get_latest_results(limit: int = 50) -> list[dict]:
         return []
 
     run_at = latest.data[0]["run_at"]
-    return _results_for_run(run_at, limit)
+    return _results_for_run(run_at, limit, min_score)
 
 
-def get_results_by_run(run_at_iso: str, limit: int = 100) -> list[dict]:
+def get_results_by_run(run_at_iso: str, limit: int = 100, min_score: int = 0) -> list[dict]:
     """Return results for a specific run identified by its run_at ISO string."""
-    return _results_for_run(run_at_iso, limit)
+    return _results_for_run(run_at_iso, limit, min_score)
 
 
-def _results_for_run(run_at: str, limit: int) -> list[dict]:
-    result = (
+def _results_for_run(run_at: str, limit: int, min_score: int = 0) -> list[dict]:
+    # Every scored ticker is stored (filter-tuning data); `min_score` only
+    # narrows what's returned — e.g. min_score=1 hides tickers no signal fired on.
+    q = (
         get_client()
         .table("screener_results")
         .select("*")
         .eq("run_at", run_at)
-        .order("rank")
-        .limit(limit)
-        .execute()
     )
-    return result.data
+    if min_score > 0:
+        q = q.gte("signal_score", min_score)
+    return q.order("rank").limit(limit).execute().data
 
 
 # ---------------------------------------------------------------------------

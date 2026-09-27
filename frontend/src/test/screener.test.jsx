@@ -295,3 +295,19 @@ it("shows error in admin panel when POST /screener/refresh-data fails", async ()
     expect(screen.getByText(/failed to start/i)).toBeInTheDocument()
   )
 })
+
+// Only tickers that fired at least one signal are requested and shown.
+it("requests only scoring tickers (min_score=1), all of them, and says so", async () => {
+  let requested
+  server.use(
+    http.get("http://localhost:8000/screener/results", ({ request }) => {
+      requested = new URL(request.url).searchParams
+      return HttpResponse.json([])
+    })
+  )
+  renderScreener()
+  await waitFor(() => expect(requested).toBeDefined())
+  expect(requested.get("min_score")).toBe("1")
+  expect(Number(requested.get("limit"))).toBeGreaterThanOrEqual(500)
+  expect(await screen.findByText(/no tickers fired an active signal/i)).toBeInTheDocument()
+})

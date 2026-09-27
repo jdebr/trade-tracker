@@ -12,6 +12,7 @@ from app.services.screener import (
     get_results_by_run,
     pass1_filter,
     run_screener,
+    score_symbols,
 )
 from app.services.universe import sync_universe, update_ticker_metadata
 
@@ -126,18 +127,34 @@ async def get_screener_job(job_id: str):
     return job
 
 
+@router.get("/scores")
+def live_signal_scores(symbols: str = Query(..., description="Comma-separated symbols")):
+    """
+    Score symbols against the current enabled signals right now (from cached
+    indicators — no fetch, nothing saved). Used by the Watchlist score column.
+    Returns {symbol: {signals, signal_score, max_signal_score,
+    signal_score_normalized} | null}; null = no indicator data yet.
+    """
+    syms = [s.strip() for s in symbols.split(",") if s.strip()]
+    if len(syms) > 200:
+        raise HTTPException(status_code=422, detail="at most 200 symbols per request")
+    return score_symbols(syms)
+
+
 @router.get("/results", response_model=list[ScreenerResultRow])
 def list_screener_results(
-    run_at: Optional[str] = Query(None, description="ISO timestamp of a specific run"),
-    limit:  int           = Query(50, ge=1, le=200),
+    run_at:    Optional[str] = Query(None, description="ISO timestamp of a specific run"),
+    limit:     int           = Query(50, ge=1, le=1000),
+    min_score: int           = Query(0, ge=0, description="Only rows scoring at least this (1 = at least one signal fired)"),
 ):
     """
     Return screener results. Without `run_at`, returns the most recent run.
-    Pass `run_at` to retrieve a historical run.
+    Pass `run_at` to retrieve a historical run. The universe is ~500 tickers,
+    so limit=1000 means "all of them".
     """
     if run_at:
-        rows = get_results_by_run(run_at, limit)
+        rows = get_results_by_run(run_at, limit, min_score)
     else:
-        rows = get_latest_results(limit)
+        rows = get_latest_results(limit, min_score)
 
     return rows

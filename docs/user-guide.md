@@ -193,6 +193,7 @@ Your daily check-in view. One page to **manage** the tickers you're tracking and
 |---|---|
 | Symbol | Ticker; hover for company name. A green **Open** badge appears if you hold a position in it. |
 | Price | Latest close from the cache |
+| Score | Live signal score (`achieved / max`) against your **current** active signals and the latest data — the same number a screener run would give it right now. Hover the **Score** header for the list of active signals; hover a row's badge to see which ones fired (✓/✗). `—` means no indicator data yet. |
 | RSI | 14-day RSI. Red ≥ 70 (overbought), Blue ≤ 30 (oversold), Green 35–65 (neutral range) |
 | BB Squeeze | Filled dot = squeeze active (bands are tight; breakout may be coming) |
 | MACD Hist | Histogram value. Green = positive momentum, Red = negative |
@@ -217,7 +218,7 @@ Your daily check-in view. One page to **manage** the tickers you're tracking and
 **Updating the data** (the status bar at the top):
 - Click **Update Now** to fetch fresh prices and re-evaluate alert conditions immediately.
 - The button is disabled during cooldown (60 min after any update) and while the scheduler is paused.
-- **Last update / Next update** — when the most recent update ran, and the next scheduled one.
+- **Last update / Next update** — when market data for your watchlist was last actually pulled, and the next scheduled update. "Last update" is read from the data itself, so it stays correct across backend restarts.
 - **API credits** — Twelve Data usage (e.g. `42/800`). **Paused until** shows in amber when paused.
 
 **Common errors:**
@@ -228,7 +229,7 @@ Your daily check-in view. One page to **manage** the tickers you're tracking and
 
 ### Screener
 
-Ranks the full S&P 500 universe by signal score so you can find trade candidates each week.
+Ranks the full S&P 500 universe by signal score so you can find trade candidates each week. It lists **every ticker that fired at least one active signal** in the latest run — no paging, so the list is as long or short as the market makes it. Tickers scoring 0 are hidden (they're still recorded for later analysis).
 
 **The results table:**
 
@@ -627,7 +628,8 @@ edge_r        = avg_R(trades with signal) − avg_R(trades without signal)
 | `POST /scheduler/resume` | Resume immediately |
 | `POST /screener/run` | Run the screener (async, returns job_id) |
 | `POST /screener/refresh-data` | Refresh OHLCV + indicators for all tickers |
-| `GET /screener/results` | Latest screener results (includes the dynamic `signals` map + normalized score) |
+| `GET /screener/results` | Latest screener results (includes the dynamic `signals` map + normalized score). `min_score=1` hides zero-score rows; `limit` up to 1000 |
+| `GET /screener/scores?symbols=…` | Live signal scores for up to 200 symbols against the current signals (used by the Watchlist Score column) |
 | `GET /signal-rules` · `POST /signal-rules` | List / create scoring signals (`?include_deleted=true` to include removed) |
 | `PATCH /signal-rules/{id}` | Edit name/description/weight/enabled (expression is immutable) |
 | `DELETE /signal-rules/{id}` · `POST /signal-rules/{id}/restore` | Soft-delete / restore a signal |

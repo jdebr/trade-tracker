@@ -7,10 +7,11 @@ Public API:
     bulk_check_freshness(symbols) -> dict[str, bool]
     upsert_bars(bars)          -> int (rows upserted)
     get_cached_bars(symbol)    -> list[dict]
+    latest_fetch_at(symbols)   -> str | None (newest fetched_at across symbols)
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from app.database import get_client
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,12 @@ def upsert_bars(bars: list[dict]) -> int:
     if not bars:
         return 0
 
+    # Stamp every write: fetched_at only defaults on INSERT, so without this a
+    # re-fetched bar (e.g. today's, refreshed intraday) would keep its first
+    # fetch time and "last update" would lag behind the real last pull.
+    now = datetime.now(timezone.utc).isoformat()
+    bars = [{**b, "fetched_at": now} for b in bars]
+
     result = (
         get_client()
         .table("ohlcv_cache")
@@ -123,3 +130,26 @@ def get_latest_closes(symbols: list[str]) -> dict[str, float]:
         if sym not in closes:        # first row per symbol is the newest (date desc)
             closes[sym] = float(row["close"])
     return closes
+
+
+def latest_fetch_at(symbols: list[str], lookback_days: int = 10) -> str | None:
+    """
+    When market data was last actually pulled for any of `symbols` — the newest
+    `fetched_at` among their recent bars. Derived from the data itself, so it
+    survives backend restarts (unlike the scheduler's in-memory last-run time).
+    The (symbol, date) index keeps this to a handful of rows.
+    """
+    if not symbols:
+        return None
+    since = (date.today() - timedelta(days=lookback_days)).isoformat()
+    result = (
+        get_client()
+        .table("ohlcv_cache")
+        .select("fetched_at")
+        .in_("symbol", [s.upper() for s in symbols])
+        .gte("date", since)
+        .order("fetched_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0]["fetched_at"] if result.data else None

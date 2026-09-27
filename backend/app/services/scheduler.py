@@ -251,6 +251,19 @@ async def trigger_cleanup() -> dict:
 # Status
 # ---------------------------------------------------------------------------
 
+def _last_data_at() -> str | None:
+    """Newest market-data pull for the watchlist, read from the cache (restart-proof)."""
+    try:
+        from app.database import get_client
+        from app.services.ohlcv_cache import latest_fetch_at
+
+        rows = get_client().table("watchlist").select("symbol").execute().data or []
+        return latest_fetch_at([r["symbol"] for r in rows])
+    except Exception as exc:  # status must never fail because of this
+        logger.warning("Could not derive last data time: %s", exc)
+        return None
+
+
 def get_status() -> dict:
     _is_paused()  # side-effect: auto-clears expired pause
 
@@ -265,6 +278,7 @@ def get_status() -> dict:
 
     return {
         "enabled":                        SCHEDULER_ENABLED,
+        "last_data_at":                   _last_data_at(),
         "paused":                         _is_paused(),
         "pause_until":                    _pause_until.isoformat() if _pause_until else None,
         "next_run_time":                  next_run,

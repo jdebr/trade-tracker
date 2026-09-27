@@ -10,9 +10,11 @@ import { ConfirmDialog } from "@/components/ui/Dialog"
 import { Combobox } from "@/components/ui/Combobox"
 import { SortHeader } from "@/components/ui/SortHeader"
 import ExitPlanDialog from "@/components/ExitPlanDialog"
+import { ScoreBadge, ActiveSignalsTip, FiredSignalsTip } from "@/components/SignalScore"
 import { INDICATORS } from "@/lib/indicators"
 import { useSort } from "@/lib/useSort"
 import { useKeyedMutation } from "@/lib/useKeyedMutation"
+import { screenerResultsQuery } from "@/lib/screenerQuery"
 import { Spinner } from "@/components/ui/Spinner"
 import { cn } from "@/lib/utils"
 
@@ -91,7 +93,10 @@ function UpdateStatusBar({ onUpdate, isUpdating, updateError }) {
     staleTime: 30_000,
   })
 
-  const lastRun  = status?.last_run_at ? fmtDatetime(status.last_run_at) : "Never"
+  // Prefer the cache-derived time of the last actual data pull: it survives
+  // backend restarts, whereas last_run_at is in-memory and resets to null.
+  const lastPull = status?.last_data_at ?? status?.last_run_at
+  const lastRun  = lastPull ? fmtDatetime(lastPull) : "Never"
   const nextRun  = status?.next_run_time ? fmtDatetime(status.next_run_time) : "—"
   const paused   = status?.paused
   const cooldown = status?.seconds_until_cooldown_expires
@@ -280,7 +285,19 @@ function OpenBadge() {
 // Table (desktop) — watchlist rows with indicator columns
 // ---------------------------------------------------------------------------
 
-function WatchlistTable({ rows, nameMap, openSymbols, sortKey, sortDir, onSort, onPlan, onRemove }) {
+/** Live signal score for a row, with a tooltip of which active signals fired. */
+function RowScore({ row, activeRules }) {
+  if (row.signal_score == null) return <span className="text-muted-foreground">—</span>
+  return (
+    <Tooltip content={<FiredSignalsTip rules={activeRules} signals={row.signals} />}>
+      <span className="inline-flex cursor-help">
+        <ScoreBadge score={row.signal_score} max={row.max_signal_score} normalized={row.signal_score_normalized} />
+      </span>
+    </Tooltip>
+  )
+}
+
+function WatchlistTable({ rows, nameMap, openSymbols, activeRules, sortKey, sortDir, onSort, onPlan, onRemove }) {
   const headerProps = { activeKey: sortKey, dir: sortDir, onSort }
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
@@ -289,6 +306,11 @@ function WatchlistTable({ rows, nameMap, openSymbols, sortKey, sortDir, onSort, 
           <tr className="border-b border-border bg-muted/50 text-muted-foreground">
             <SortHeader label="Symbol" sortKey="symbol" {...headerProps} />
             <SortHeader label="Price" sortKey="price" align="right" {...headerProps} />
+            <SortHeader
+              label="Score" sortKey="signal_score" align="center"
+              tooltip={<ActiveSignalsTip rules={activeRules} />}
+              {...headerProps}
+            />
             <SortHeader label="RSI" sortKey="rsi_14" align="right" tooltip={indicatorTip("rsi_14")} {...headerProps} />
             <SortHeader label="BB Squeeze" sortKey="bb_squeeze" align="center" tooltip={indicatorTip("bb_squeeze")} {...headerProps} />
             <SortHeader label="MACD Hist" sortKey="macd_hist" align="right" tooltip={indicatorTip("macd_hist")} {...headerProps} />
@@ -316,6 +338,7 @@ function WatchlistTable({ rows, nameMap, openSymbols, sortKey, sortDir, onSort, 
               <td className="px-4 py-3 text-right tabular-nums font-medium">
                 {row.price != null ? `$${Number(row.price).toFixed(2)}` : "—"}
               </td>
+              <td className="px-4 py-3 text-center"><RowScore row={row} activeRules={activeRules} /></td>
               <td className={cn("px-4 py-3 text-right tabular-nums font-medium", rsiColour(row.rsi_14))}>{fmt(row.rsi_14, 1)}</td>
               <td className="px-4 py-3 text-center"><BoolDot value={row.bb_squeeze} /></td>
               <td className={cn("px-4 py-3 text-right tabular-nums", macdColour(row.macd_hist))}>{fmt(row.macd_hist)}</td>
@@ -336,7 +359,7 @@ function WatchlistTable({ rows, nameMap, openSymbols, sortKey, sortDir, onSort, 
 // Cards (mobile)
 // ---------------------------------------------------------------------------
 
-function WatchlistCards({ rows, nameMap, openSymbols, onPlan, onRemove }) {
+function WatchlistCards({ rows, nameMap, openSymbols, activeRules, onPlan, onRemove }) {
   return (
     <div className="md:hidden space-y-3">
       {rows.map((row) => (
@@ -361,6 +384,10 @@ function WatchlistCards({ rows, nameMap, openSymbols, onPlan, onRemove }) {
               <span className="tabular-nums font-medium">
                 {row.price != null ? `$${Number(row.price).toFixed(2)}` : "—"}
               </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Score</span>
+              <RowScore row={row} activeRules={activeRules} />
             </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">RSI</span>
@@ -421,8 +448,7 @@ export default function WatchlistPage() {
   })
 
   const { data: screenerResults = [] } = useQuery({
-    queryKey: ["screener-results"],
-    queryFn: () => api.get("/screener/results"),
+    ...screenerResultsQuery,
     staleTime: 5 * 60 * 1000,
   })
 
@@ -432,6 +458,20 @@ export default function WatchlistPage() {
     queryKey: ["snapshots", symbols],
     queryFn: () => api.get(`/indicators/snapshots?symbols=${symbols.join(",")}`),
     enabled: symbols.length > 0,
+  })
+
+  // Live signal scores for the watchlist (current signals × latest cached
+  // indicators — the same evaluation a screener run would do right now).
+  const { data: scoreMap = {} } = useQuery({
+    queryKey: ["signal-scores", symbols],
+    queryFn: () => api.get(`/screener/scores?symbols=${symbols.join(",")}`),
+    enabled: symbols.length > 0,
+  })
+  // Under the "signal-rules" prefix, so editing a signal refreshes the tooltip.
+  const { data: activeRules = [] } = useQuery({
+    queryKey: ["signal-rules", "active"],
+    queryFn: () => api.get("/signal-rules?enabled=true"),
+    staleTime: 60 * 1000,
   })
 
   const { data: quoteMap = {} } = useQuery({
@@ -484,8 +524,9 @@ export default function WatchlistPage() {
       ...e,
       ...(snapBySymbol.get(e.symbol) || {}),
       price: quoteMap[e.symbol] ?? null,
+      ...(scoreMap[e.symbol] || { signal_score: null }),
     }))
-  }, [entries, activeGroup, snapBySymbol, quoteMap])
+  }, [entries, activeGroup, snapBySymbol, quoteMap, scoreMap])
 
   const { sorted, sortKey, sortDir, requestSort } = useSort(rows, { key: "symbol", dir: "asc" })
 
@@ -527,6 +568,7 @@ export default function WatchlistPage() {
       setUpdateError(null)
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ["snapshots"] })
+        queryClient.invalidateQueries({ queryKey: ["signal-scores"] })
         queryClient.invalidateQueries({ queryKey: ["scheduler-status"] })
       }, 3000)
     },
@@ -598,11 +640,11 @@ export default function WatchlistPage() {
             </div>
           )}
           <WatchlistTable
-            rows={sorted} nameMap={nameMap} openSymbols={openSymbols}
+            rows={sorted} nameMap={nameMap} openSymbols={openSymbols} activeRules={activeRules}
             sortKey={sortKey} sortDir={sortDir} onSort={requestSort}
             onPlan={setPlanningRow} onRemove={setPendingDelete}
           />
-          <WatchlistCards rows={sorted} nameMap={nameMap} openSymbols={openSymbols} onPlan={setPlanningRow} onRemove={setPendingDelete} />
+          <WatchlistCards rows={sorted} nameMap={nameMap} openSymbols={openSymbols} activeRules={activeRules} onPlan={setPlanningRow} onRemove={setPendingDelete} />
         </>
       )}
 

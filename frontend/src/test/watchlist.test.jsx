@@ -304,3 +304,45 @@ describe("position integration", () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// Signal score column + restart-proof last update
+// ---------------------------------------------------------------------------
+
+describe("signal score column", () => {
+  it("shows each row's live score, and — for rows without data", async () => {
+    renderPage()
+    // Table (desktop) and cards (mobile) both render in jsdom.
+    expect((await screen.findAllByLabelText("Signal score 3 of 5")).length).toBeGreaterThan(0)
+    expect(screen.getAllByLabelText("Signal score 0 of 5").length).toBeGreaterThan(0)
+    expect(screen.getByRole("button", { name: /sort by score/i })).toBeInTheDocument()
+  })
+
+  it("lists the active signals in the column header tooltip", async () => {
+    renderPage()
+    await screen.findAllByLabelText("Signal score 3 of 5")
+    await userEvent.hover(screen.getByRole("button", { name: /sort by score/i }).firstChild)
+    expect((await screen.findAllByText(/active signals/i)).length).toBeGreaterThan(0)
+    expect(screen.getAllByText("Momentum Pop").length).toBeGreaterThan(0)
+  })
+
+  it("shows which signals fired in a row's tooltip", async () => {
+    renderPage()
+    const [badge] = await screen.findAllByLabelText("Signal score 3 of 5")
+    await userEvent.hover(badge)
+    await waitFor(() => expect(screen.getAllByText("Momentum Pop").length).toBeGreaterThan(0))
+  })
+})
+
+describe("last update", () => {
+  it("prefers the cache-derived last data time over the in-memory last run", async () => {
+    server.use(
+      http.get(`${API}/scheduler/status`, () =>
+        HttpResponse.json({ ...MOCK_SCHEDULER_STATUS, last_run_at: null, last_data_at: "2026-09-25T20:15:00+00:00" })
+      )
+    )
+    renderPage()
+    await waitFor(() => expect(screen.getByText(/last update/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/last update/i).parentElement).not.toHaveTextContent(/never/i))
+  })
+})
