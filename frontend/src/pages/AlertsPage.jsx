@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { CheckCheck, BellOff } from "lucide-react"
 import { api } from "@/lib/api"
+import { useKeyedMutation } from "@/lib/useKeyedMutation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -141,9 +142,9 @@ function AlertCard({ alert, onAcknowledge, isAcknowledging }) {
 
       <button
         onClick={() => onAcknowledge(alert.id)}
-        disabled={isAcknowledging}
+        aria-busy={isAcknowledging || undefined}
         aria-label={`Acknowledge alert for ${alert.symbol}`}
-        className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors disabled:opacity-40 mt-0.5"
+        className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors mt-0.5"
       >
         <CheckCheck size={16} aria-hidden="true" />
       </button>
@@ -172,9 +173,24 @@ export default function AlertsPage() {
     opportunity: alerts.filter((a) => a.category === "opportunity").length,
   }
 
-  const { mutate: acknowledge, isPending: isAcknowledging } = useMutation({
+  // Per-alert and optimistic: the card leaves immediately (and comes back if the
+  // request fails); acknowledging one alert never blocks another.
+  const [ackError, setAckError] = useState(null)
+  const ack = useKeyedMutation({
+    keyOf: (id) => id,
     mutationFn: (id) => api.patch(`/alerts/${id}/acknowledge`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+    onMutate: async (id) => {
+      setAckError(null)
+      await queryClient.cancelQueries({ queryKey: ["alerts"] })
+      const previous = queryClient.getQueryData(["alerts"])
+      queryClient.setQueryData(["alerts"], (old = []) => old.filter((a) => a.id !== id))
+      return { previous }
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(["alerts"], ctx.previous)
+      setAckError("Couldn't acknowledge that alert — it's back in the list. Try again.")
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
   })
 
   const { mutate: acknowledgeAll, isPending: isAcknowledgingAll } = useMutation({
@@ -197,10 +213,10 @@ export default function AlertsPage() {
             variant="outline"
             size="sm"
             onClick={() => acknowledgeAll()}
-            disabled={isAcknowledgingAll}
+            loading={isAcknowledgingAll}
             aria-label="Clear all alerts"
           >
-            <CheckCheck size={14} aria-hidden="true" />
+            {!isAcknowledgingAll && <CheckCheck size={14} aria-hidden="true" />}
             {isAcknowledgingAll ? "Clearing…" : "Clear All"}
           </Button>
         )}
@@ -250,6 +266,10 @@ export default function AlertsPage() {
         </div>
       )}
 
+      {ackError && (
+        <p role="alert" className="mb-3 text-xs text-red-400">{ackError}</p>
+      )}
+
       {/* Alert list */}
       {!isLoading && visible.length > 0 && (
         <>
@@ -258,8 +278,8 @@ export default function AlertsPage() {
               <AlertCard
                 key={alert.id}
                 alert={alert}
-                onAcknowledge={acknowledge}
-                isAcknowledging={isAcknowledging}
+                onAcknowledge={ack.mutate}
+                isAcknowledging={ack.isPending(alert.id)}
               />
             ))}
           </div>

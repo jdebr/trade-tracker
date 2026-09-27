@@ -12,6 +12,8 @@ import { SortHeader } from "@/components/ui/SortHeader"
 import ExitPlanDialog from "@/components/ExitPlanDialog"
 import { INDICATORS } from "@/lib/indicators"
 import { useSort } from "@/lib/useSort"
+import { useKeyedMutation } from "@/lib/useKeyedMutation"
+import { Spinner } from "@/components/ui/Spinner"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -136,7 +138,13 @@ function UpdateStatusBar({ onUpdate, isUpdating, updateError }) {
 // Add form
 // ---------------------------------------------------------------------------
 
-function AddForm({ onAdd, isAdding, error, groupOptions, tickerOptions, symbolSource, onToggleSource }) {
+/**
+ * Adding never blocks the form: it clears as soon as you submit, each add is
+ * tracked per symbol (a chip shows while it's in flight), and you can queue
+ * the next one straight away. Only re-adding a symbol that's already in
+ * flight is ignored.
+ */
+function AddForm({ onAdd, isAdding, pendingSymbols, error, groupOptions, tickerOptions, symbolSource, onToggleSource }) {
   const [symbol, setSymbol] = useState("")
   const [group,  setGroup]  = useState("")
 
@@ -185,9 +193,24 @@ function AddForm({ onAdd, isAdding, error, groupOptions, tickerOptions, symbolSo
         placeholder="Group (optional)" allowNew={true}
         aria-label="Group name" className="w-44"
       />
-      <Button type="submit" disabled={isAdding || !symbolIsValid} size="sm" className="self-start">
-        {isAdding ? "Adding…" : "Add"}
+      <Button
+        type="submit"
+        disabled={!symbolIsValid}
+        loading={isAdding(symbol.trim().toUpperCase())}
+        size="sm"
+        className="self-start"
+      >
+        Add
       </Button>
+      {pendingSymbols.length > 0 && (
+        <div className="self-start flex flex-wrap items-center gap-1.5 pt-1.5 text-xs text-muted-foreground" aria-live="polite">
+          {pendingSymbols.map((s) => (
+            <span key={s} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
+              <Spinner size={10} /> Adding {s}…
+            </span>
+          ))}
+        </div>
+      )}
       {error && <p role="alert" className="w-full text-xs text-destructive mt-1">{error}</p>}
     </form>
   )
@@ -469,8 +492,12 @@ export default function WatchlistPage() {
   const hasAnySnapshot = snapshots.length > 0
 
   // ---- Mutations ----
-  const { mutate: addEntry, isPending: isAdding } = useMutation({
+  const [pendingAdds, setPendingAdds] = useState([])
+  const add = useKeyedMutation({
+    keyOf: (body) => body.symbol,
     mutationFn: (body) => api.post("/watchlist", body),
+    onMutate: (body) => setPendingAdds((p) => [...p, body.symbol]),
+    onSettled: (_d, _e, body) => setPendingAdds((p) => p.filter((s) => s !== body.symbol)),
     onSuccess: () => {
       setAddError(null)
       queryClient.invalidateQueries({ queryKey: ["watchlist"] })
@@ -531,8 +558,9 @@ export default function WatchlistPage() {
       />
 
       <AddForm
-        onAdd={addEntry}
-        isAdding={isAdding}
+        onAdd={add.mutate}
+        isAdding={add.isPending}
+        pendingSymbols={pendingAdds}
         error={addError}
         groupOptions={groupNames}
         tickerOptions={tickerOptions}

@@ -8,8 +8,10 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip } from "@/components/ui/Tooltip"
 import { SortHeader } from "@/components/ui/SortHeader"
+import { Field, NumberInput, Select, Textarea } from "@/components/ui/form"
 import { EXIT_REASONS } from "@/lib/exitMethods"
 import { useSort } from "@/lib/useSort"
+import { numberError } from "@/lib/validate"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -99,9 +101,12 @@ function ProgressBar({ stop, entry, target, current }) {
 // Close dialog
 // ---------------------------------------------------------------------------
 
+const EXIT_PRICE_RULES = { required: true, min: 0.01, maxDecimals: 4 }
+const EXIT_REASON_OPTIONS = Object.entries(EXIT_REASONS).map(([value, label]) => ({ value, label }))
+
 function ClosePositionDialog({ position, defaultPrice, open, onOpenChange }) {
   const queryClient = useQueryClient()
-  const [exitPrice, setExitPrice] = useState("")
+  const [exitPrice, setExitPrice] = useState(null)
   const [exitReason, setExitReason] = useState("manual")
   const [notes, setNotes] = useState("")
   const [error, setError] = useState(null)
@@ -111,7 +116,7 @@ function ClosePositionDialog({ position, defaultPrice, open, onOpenChange }) {
   // relying on useState's mount-only initializer.
   useEffect(() => {
     if (open) {
-      setExitPrice(defaultPrice != null ? String(defaultPrice) : "")
+      setExitPrice(defaultPrice != null ? Number(defaultPrice) : null)
       setExitReason("manual")
       setNotes("")
       setError(null)
@@ -120,14 +125,14 @@ function ClosePositionDialog({ position, defaultPrice, open, onOpenChange }) {
 
   const { mutate: close, isPending } = useMutation({
     mutationFn: () => api.post(`/positions/${position.id}/close`, {
-      exit_price: Number(exitPrice),
+      exit_price: exitPrice,
       exit_reason: exitReason,
       notes: notes || null,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["positions"] })
       onOpenChange(false)
-      setExitPrice(""); setNotes(""); setError(null)
+      setExitPrice(null); setNotes(""); setError(null)
     },
     onError: () => setError("Failed to close the position. Check that the server is running."),
   })
@@ -135,8 +140,8 @@ function ClosePositionDialog({ position, defaultPrice, open, onOpenChange }) {
   // Preview the outcome before committing — R is measured against the INITIAL
   // stop, which is what the server will use too.
   const preview = useMemo(() => {
-    const px = Number(exitPrice)
-    if (!px || !position) return null
+    const px = exitPrice
+    if (!px || numberError(px, EXIT_PRICE_RULES) || !position) return null
     const entry = Number(position.entry_price)
     const risk  = entry - Number(position.initial_stop_price)
     return {
@@ -166,45 +171,38 @@ function ClosePositionDialog({ position, defaultPrice, open, onOpenChange }) {
             </DialogPrimitive.Close>
           </div>
 
-          <div className="space-y-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Exit price</span>
-              <input
-                type="number"
-                step="0.01"
+          {/* Locked while the close request is in flight (a dialog commit). */}
+          <fieldset disabled={isPending} className="space-y-3 min-w-0">
+            <Field label="Exit price">
+              <NumberInput
                 value={exitPrice}
-                onChange={(e) => setExitPrice(e.target.value)}
+                onChange={setExitPrice}
+                {...EXIT_PRICE_RULES}
+                prefix="$"
                 aria-label="Exit price"
                 autoFocus
-                className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
               />
-            </label>
+            </Field>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Reason</span>
-              <select
+            <Field label="Reason">
+              <Select
                 value={exitReason}
-                onChange={(e) => setExitReason(e.target.value)}
+                onValueChange={setExitReason}
+                options={EXIT_REASON_OPTIONS}
                 aria-label="Exit reason"
-                className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                {Object.entries(EXIT_REASONS).map(([key, label]) => (
-                  <option key={key} value={key}>{label}</option>
-                ))}
-              </select>
-            </label>
+              />
+            </Field>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Notes</span>
-              <textarea
+            <Field label="Notes">
+              <Textarea
+                autoGrow
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={2}
                 placeholder="What did you learn?"
                 aria-label="Notes"
-                className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
               />
-            </label>
+            </Field>
 
             {preview && (
               <div className="rounded-md border border-border bg-muted/30 px-3 py-2 flex justify-between text-xs">
@@ -217,13 +215,18 @@ function ClosePositionDialog({ position, defaultPrice, open, onOpenChange }) {
             )}
 
             {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-          </div>
+          </fieldset>
 
           <div className="mt-5 flex justify-end gap-2">
             <DialogPrimitive.Close asChild>
               <Button variant="outline" size="sm" disabled={isPending}>Cancel</Button>
             </DialogPrimitive.Close>
-            <Button size="sm" onClick={() => close()} disabled={!exitPrice || isPending}>
+            <Button
+              size="sm"
+              onClick={() => close()}
+              disabled={!!numberError(exitPrice, EXIT_PRICE_RULES) && !isPending}
+              loading={isPending}
+            >
               {isPending ? "Closing…" : "Close position"}
             </Button>
           </div>

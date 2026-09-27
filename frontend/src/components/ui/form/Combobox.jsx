@@ -46,10 +46,10 @@ export function Combobox({
   "aria-label": ariaLabel,
 }) {
   const [open, setOpen] = useState(false)
+  const [focused, setFocused] = useState(false)
   const [highlighted, setHighlighted] = useState(0)
   const anchorRef = useRef(null)
   const listId = useId()
-  const field = useFieldControl({ id, invalid })
 
   const query = value || ""
   const q = query.trim()
@@ -64,7 +64,12 @@ export function Combobox({
   const exactMatch = options.some((opt) => (opt.symbol || opt).toLowerCase() === q.toLowerCase())
   const displayList = [...filtered]
   if (allowNew && q && !exactMatch) displayList.push({ __isNew: true, value: q })
-  const showNotInUniverse = !allowNew && q && !exactMatch
+  // Without allowNew, a value that isn't one of the options is invalid. Don't
+  // nag while suggestions still match what's being typed — flag it once nothing
+  // matches, or when the user leaves the field on a non-match.
+  const notInList = !allowNew && !!q && !exactMatch && (filtered.length === 0 || !focused)
+
+  const field = useFieldControl({ id, invalid: invalid || notInList || undefined })
 
   const listOpen = open && displayList.length > 0
   const active = Math.min(highlighted, displayList.length - 1)
@@ -118,7 +123,11 @@ export function Combobox({
               autoComplete="off"
               spellCheck={false}
               className={cn(controlClass, "w-full px-3", field.invalid && invalidClass)}
-              onFocus={() => setOpen(true)}
+              onFocus={() => {
+                setFocused(true)
+                setOpen(true)
+              }}
+              onBlur={() => setFocused(false)}
               onClick={() => setOpen(true)}
               onChange={(e) => {
                 onChange(e.target.value)
@@ -130,8 +139,8 @@ export function Combobox({
           </div>
         </Popover.Anchor>
 
-        {showNotInUniverse && (
-          <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">Not in universe</p>
+        {notInList && (
+          <p className="mt-1 text-[11px] leading-tight text-red-400">Not in universe</p>
         )}
       </div>
 

@@ -2,6 +2,7 @@ import { useState, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Plus, CheckCircle, Target, Briefcase } from "lucide-react"
 import { api } from "@/lib/api"
+import { useKeyedMutation } from "@/lib/useKeyedMutation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -178,10 +179,10 @@ function AddWatchlistButton({ symbol, watchlistSet, onAdd, isPending }) {
         size="sm"
         className="h-7 w-7 p-0"
         aria-label={`Add ${symbol} to watchlist`}
-        disabled={isPending}
+        loading={isPending}
         onClick={() => onAdd(symbol)}
       >
-        <Plus size={14} aria-hidden="true" />
+        {!isPending && <Plus size={14} aria-hidden="true" />}
       </Button>
     </Tooltip>
   )
@@ -213,7 +214,7 @@ function PlanTradeButton({ row, name, onPlan }) {
   )
 }
 
-function ResultsTable({ rows, signalCols, nameMap, watchlistSet, openSymbols, onAddToWatchlist, addingSymbol, onPlan }) {
+function ResultsTable({ rows, signalCols, nameMap, watchlistSet, openSymbols, onAddToWatchlist, isAdding, onPlan }) {
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-border mt-4">
       <table className="w-full text-sm">
@@ -254,7 +255,7 @@ function ResultsTable({ rows, signalCols, nameMap, watchlistSet, openSymbols, on
                     symbol={row.symbol}
                     watchlistSet={watchlistSet}
                     onAdd={onAddToWatchlist}
-                    isPending={addingSymbol === row.symbol}
+                    isPending={isAdding(row.symbol)}
                   />
                 </div>
               </td>
@@ -270,7 +271,7 @@ function ResultsTable({ rows, signalCols, nameMap, watchlistSet, openSymbols, on
 // Results card list (mobile)
 // ---------------------------------------------------------------------------
 
-function ResultsCards({ rows, signalCols, nameMap, watchlistSet, openSymbols, onAddToWatchlist, addingSymbol, onPlan }) {
+function ResultsCards({ rows, signalCols, nameMap, watchlistSet, openSymbols, onAddToWatchlist, isAdding, onPlan }) {
   return (
     <div className="md:hidden space-y-3 mt-4">
       {rows.map((row) => (
@@ -298,7 +299,7 @@ function ResultsCards({ rows, signalCols, nameMap, watchlistSet, openSymbols, on
                 symbol={row.symbol}
                 watchlistSet={watchlistSet}
                 onAdd={onAddToWatchlist}
-                isPending={addingSymbol === row.symbol}
+                isPending={isAdding(row.symbol)}
               />
             </div>
           </div>
@@ -333,7 +334,8 @@ function AdminPanel({
               size="sm"
               variant="outline"
               onClick={onRecompute}
-              disabled={isRecomputing || isRefreshing}
+              loading={isRecomputing}
+              disabled={isRefreshing && !isRecomputing}
             >
               {recomputeButtonLabel}
             </Button>
@@ -341,7 +343,8 @@ function AdminPanel({
               size="sm"
               variant="outline"
               onClick={onRefresh}
-              disabled={isRefreshing || isRecomputing}
+              loading={isRefreshing}
+              disabled={isRecomputing && !isRefreshing}
             >
               {refreshButtonLabel}
             </Button>
@@ -381,7 +384,6 @@ export default function ScreenerPage() {
   const queryClient = useQueryClient()
 
   // ---- Add-to-watchlist state ----
-  const [addingSymbol,   setAddingSymbol]   = useState(null)
   const [addWlError,     setAddWlError]     = useState(null)
 
   // ---- Exit plan builder ----
@@ -439,10 +441,11 @@ export default function ScreenerPage() {
   )
 
   // ---- Add to watchlist ----
-  const { mutate: addToWatchlist } = useMutation({
+  // Keyed per symbol: adding one ticker never blocks the add button on another.
+  const addWl = useKeyedMutation({
+    keyOf: (symbol) => symbol,
     mutationFn: (symbol) => api.post("/watchlist", { symbol, group_name: null }),
     onMutate: (symbol) => {
-      setAddingSymbol(symbol)
       setAddWlError(null)
       // Optimistic: add symbol to local watchlist cache
       queryClient.setQueryData(["watchlist"], (old = []) => [
@@ -451,11 +454,9 @@ export default function ScreenerPage() {
       ])
     },
     onSuccess: () => {
-      setAddingSymbol(null)
       queryClient.invalidateQueries({ queryKey: ["watchlist"] })
     },
     onError: (err, symbol) => {
-      setAddingSymbol(null)
       // Revert optimistic update
       queryClient.setQueryData(["watchlist"], (old = []) =>
         old.filter((e) => e.symbol !== symbol || !e.id.startsWith("opt-"))
@@ -629,7 +630,9 @@ export default function ScreenerPage() {
         <div className="flex flex-col items-end gap-1 shrink-0">
           <Button
             onClick={() => startScreen()}
-            disabled={isScreening || isRefreshing}
+            loading={isScreening}
+            disabled={isRefreshing}
+            title={isRefreshing ? "Wait for the data refresh to finish" : undefined}
           >
             {screenButtonLabel}
           </Button>
@@ -699,8 +702,8 @@ export default function ScreenerPage() {
             nameMap={nameMap}
             watchlistSet={watchlistSet}
             openSymbols={openSymbols}
-            onAddToWatchlist={addToWatchlist}
-            addingSymbol={addingSymbol}
+            onAddToWatchlist={addWl.mutate}
+            isAdding={addWl.isPending}
             onPlan={setPlanningRow}
           />
           <ResultsCards
@@ -709,8 +712,8 @@ export default function ScreenerPage() {
             nameMap={nameMap}
             watchlistSet={watchlistSet}
             openSymbols={openSymbols}
-            onAddToWatchlist={addToWatchlist}
-            addingSymbol={addingSymbol}
+            onAddToWatchlist={addWl.mutate}
+            isAdding={addWl.isPending}
             onPlan={setPlanningRow}
           />
           {screenMeta && (

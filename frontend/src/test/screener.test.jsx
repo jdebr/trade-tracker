@@ -173,18 +173,23 @@ it("clicking Screen Tickers calls POST /screener/run and shows progress", async 
 })
 
 // 9. Screen Tickers button disabled while job is running
-it("Screen Tickers button is disabled while screener job is running", async () => {
+it("Screen Tickers button is busy (spinner, clicks ignored) while the job runs", async () => {
+  const started = vi.fn()
   server.use(
+    http.post("http://localhost:8000/screener/run", () => {
+      started()
+      return HttpResponse.json({ job_id: MOCK_JOB_ID })
+    }),
     http.get("http://localhost:8000/screener/job/:jobId", () =>
       HttpResponse.json({ job_id: MOCK_JOB_ID, status: "running", result: null, error: null })
     )
   )
   renderScreener()
   fireEvent.click(screen.getByRole("button", { name: /screen tickers/i }))
-  await waitFor(() => {
-    const btn = screen.getByRole("button", { name: /starting|screening/i })
-    expect(btn).toBeDisabled()
-  })
+  const btn = await screen.findByRole("button", { name: /screening/i })
+  expect(btn).toHaveAttribute("aria-busy", "true")
+  fireEvent.click(btn)
+  expect(started).toHaveBeenCalledTimes(1)
 })
 
 // 10. Polls screener job until done, then results render
@@ -245,7 +250,7 @@ it("clicking Refresh Data calls POST /screener/refresh-data and shows progress",
 })
 
 // 14. Refresh Data button disabled while refresh is in flight
-it("Refresh Data button is disabled while refresh is running", async () => {
+it("Refresh Data is busy while refreshing and blocks a conflicting screener run", async () => {
   server.use(
     http.get("http://localhost:8000/screener/job/:jobId", () =>
       HttpResponse.json({ job_id: MOCK_JOB_ID, status: "running", result: null, error: null })
@@ -254,10 +259,10 @@ it("Refresh Data button is disabled while refresh is running", async () => {
   renderScreener()
   openAdmin()
   fireEvent.click(screen.getByRole("button", { name: /refresh data/i }))
-  await waitFor(() => {
-    const btn = screen.getByRole("button", { name: /starting|refreshing/i })
-    expect(btn).toBeDisabled()
-  })
+  const btn = await screen.findByRole("button", { name: /refreshing/i })
+  expect(btn).toHaveAttribute("aria-busy", "true")
+  // The server runs one job at a time, so a screener run is genuinely blocked.
+  expect(screen.getByRole("button", { name: /screen tickers/i })).toBeDisabled()
 })
 
 // 15. Refresh metadata shown after refresh job completes

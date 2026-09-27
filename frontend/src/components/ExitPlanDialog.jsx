@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query"
 import { X, AlertTriangle, FlaskConical, Wallet } from "lucide-react"
@@ -7,76 +7,18 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip } from "@/components/ui/Tooltip"
 import { RangeInput } from "@/components/ui/RangeInput"
+import { Field, NumberInput, Select, Textarea } from "@/components/ui/form"
 import { useDebounce } from "@/lib/useDebounce"
 import { STOP_METHODS, TARGET_METHODS, stopMethodTip, targetMethodTip } from "@/lib/exitMethods"
 import { cn } from "@/lib/utils"
 
-// ---------------------------------------------------------------------------
-// Small form primitives — local to this dialog
-// ---------------------------------------------------------------------------
+// Prices: positive, cents (a few extra places for sub-dollar names).
+const PRICE_RULES = { min: 0.01, maxDecimals: 4 }
 
-function Field({ label, hint, children }) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      {children}
-      {hint && <span className="text-[11px] text-muted-foreground/70">{hint}</span>}
-    </label>
-  )
-}
-
-const inputClass =
-  "w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm " +
-  "focus:outline-none focus:ring-2 focus:ring-ring tabular-nums"
-
-function NumberInput({ value, onChange, step = "0.01", ...props }) {
-  return (
-    <input
-      type="number"
-      step={step}
-      value={value ?? ""}
-      onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
-      className={inputClass}
-      {...props}
-    />
-  )
-}
-
-// Grows to fit its content so long trade notes stay visible without scrolling.
-function AutoResizeTextarea({ value, onChange, minRows = 3, ...props }) {
-  const ref = useRef(null)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.style.height = "auto"
-    el.style.height = `${el.scrollHeight}px`
-  }, [value])
-  return (
-    <textarea
-      ref={ref}
-      rows={minRows}
-      value={value}
-      onChange={onChange}
-      className={cn(inputClass, "resize-none overflow-hidden leading-relaxed")}
-      {...props}
-    />
-  )
-}
-
-function Select({ value, onChange, options, ...props }) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={cn(inputClass, "cursor-pointer")}
-      {...props}
-    >
-      {Object.entries(options).map(([key, meta]) => (
-        <option key={key} value={key}>{meta.label}</option>
-      ))}
-    </select>
-  )
-}
+const methodOptions = (methods) =>
+  Object.entries(methods).map(([value, m]) => ({ value, label: m.label, description: m.description }))
+const STOP_OPTIONS = methodOptions(STOP_METHODS)
+const TARGET_OPTIONS = methodOptions(TARGET_METHODS)
 
 function money(n) {
   return n == null ? "—" : `$${Number(n).toFixed(2)}`
@@ -375,8 +317,9 @@ export default function ExitPlanDialog({
           </div>
 
           <div className="grid md:grid-cols-2 gap-5">
-            {/* ---------------- Inputs ---------------- */}
-            <div className="space-y-3.5">
+            {/* ---------------- Inputs ----------------
+                Locked only while the position is being opened (a dialog commit). */}
+            <fieldset disabled={isOpening} className="space-y-3.5 min-w-0">
               {/* A slider only makes sense with a price to centre it on (from the
                   Screener). Planned from the Watchlist there's no suggested entry,
                   so fall back to a plain field the user types into. */}
@@ -393,15 +336,15 @@ export default function ExitPlanDialog({
                 />
               ) : (
                 <Field label="Entry price" hint="The price you plan to enter at.">
-                  <NumberInput value={entryPrice} onChange={setEntryPrice} aria-label="Entry price" autoFocus />
+                  <NumberInput value={entryPrice} onChange={setEntryPrice} {...PRICE_RULES} required prefix="$" aria-label="Entry price" autoFocus />
                 </Field>
               )}
 
               <Field label="Stop method">
                 <Select
                   value={stopMethod ?? ""}
-                  onChange={setStopMethod}
-                  options={STOP_METHODS}
+                  onValueChange={setStopMethod}
+                  options={STOP_OPTIONS}
                   aria-label="Stop method"
                 />
               </Field>
@@ -419,15 +362,15 @@ export default function ExitPlanDialog({
               )}
               {stopMethod === "manual" && (
                 <Field label="Stop price">
-                  <NumberInput value={manualStop} onChange={setManualStop} aria-label="Stop price" />
+                  <NumberInput value={manualStop} onChange={setManualStop} {...PRICE_RULES} required prefix="$" aria-label="Stop price" />
                 </Field>
               )}
 
               <Field label="Target method">
                 <Select
                   value={targetMethod ?? ""}
-                  onChange={setTargetMethod}
-                  options={TARGET_METHODS}
+                  onValueChange={setTargetMethod}
+                  options={TARGET_OPTIONS}
                   aria-label="Target method"
                 />
               </Field>
@@ -445,7 +388,7 @@ export default function ExitPlanDialog({
               )}
               {targetMethod === "manual" && (
                 <Field label="Target price">
-                  <NumberInput value={manualTarget} onChange={setManualTarget} aria-label="Target price" />
+                  <NumberInput value={manualTarget} onChange={setManualTarget} {...PRICE_RULES} required prefix="$" aria-label="Target price" />
                 </Field>
               )}
 
@@ -460,15 +403,16 @@ export default function ExitPlanDialog({
               />
 
               <Field label="Notes">
-                <AutoResizeTextarea
+                <Textarea
+                  autoGrow
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  minRows={3}
+                  rows={3}
                   placeholder="Why this trade? What's the thesis?"
                   aria-label="Notes"
                 />
               </Field>
-            </div>
+            </fieldset>
 
             {/* ---------------- Result ----------------
                 While recomputing (method switch, slider drag) the previous plan
@@ -541,7 +485,7 @@ export default function ExitPlanDialog({
                 type="checkbox"
                 checked={!isSimulated}
                 onChange={(e) => setIsSimulated(!e.target.checked)}
-                className="rounded border-input"
+                className="rounded border-input accent-primary"
                 aria-label="Real money position"
               />
               <span className="flex items-center gap-1.5">
@@ -560,7 +504,7 @@ export default function ExitPlanDialog({
               <DialogPrimitive.Close asChild>
                 <Button variant="outline" size="sm" disabled={isOpening}>Cancel</Button>
               </DialogPrimitive.Close>
-              <Button size="sm" onClick={() => openPosition()} disabled={!canOpen}>
+              <Button size="sm" onClick={() => openPosition()} disabled={!canOpen && !isOpening} loading={isOpening}>
                 {isOpening
                   ? "Opening…"
                   : `Open ${isSimulated ? "simulated " : ""}position`}

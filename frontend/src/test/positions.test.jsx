@@ -81,7 +81,7 @@ describe("PositionsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }))
     // AAPL's last known price (MOCK_POSITION_QUOTES) is 106.
-    await waitFor(() => expect(screen.getByLabelText("Exit price")).toHaveValue(106))
+    await waitFor(() => expect(screen.getByLabelText("Exit price")).toHaveValue("106"))
   })
 
   it("closed-history columns are sortable", async () => {

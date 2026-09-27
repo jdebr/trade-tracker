@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/context/AuthContext"
 import { Button } from "@/components/ui/button"
+import { Field, TextInput } from "@/components/ui/form"
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -48,37 +49,33 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <label htmlFor="email" className="text-sm font-medium">Email</label>
-            <input
-              id="email"
+          <Field label="Email" labelClassName="text-sm text-foreground">
+            <TextInput
               type="email"
               autoComplete="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="py-2"
             />
-          </div>
+          </Field>
 
-          <div className="space-y-1">
-            <label htmlFor="password" className="text-sm font-medium">Password</label>
-            <input
-              id="password"
+          <Field label="Password" labelClassName="text-sm text-foreground">
+            <TextInput
               type="password"
               autoComplete="current-password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="py-2"
             />
-          </div>
+          </Field>
 
           {error && (
             <p className="text-sm text-destructive" role="alert">{error}</p>
           )}
 
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button type="submit" className="w-full" loading={loading}>
             {loading ? "Signing in…" : "Sign in"}
           </Button>
         </form>
