@@ -837,7 +837,7 @@ A single, reusable boolean-expression engine that both custom indicators (M19) a
 
 Turn the hardcoded screener signals into user-defined, named indicators built on the M18 engine, and let new indicators flow automatically into scoring and position tracking.
 
-**Status: complete + deployed.** M19a backend (38b1548); M19b frontend — dynamic Screener display (35f41bd), signals page + builder + `/rules/preview-universe` (4925fb2), structured condition builder (c5e84c5); review fixes (7db9a9e); M19c smoke-test polish + re-review hardening (61a5153, pushed 2026-09-26). Final live smoke test of the M19c changes pending. Sub-slicing + locked decisions below.
+**Status: complete + deployed.** M19a backend (38b1548); M19b frontend — dynamic Screener display (35f41bd), signals page + builder + `/rules/preview-universe` (4925fb2), structured condition builder (c5e84c5); review fixes (7db9a9e); M19c smoke-test polish + re-review hardening (61a5153, pushed 2026-09-26). Live smoke-tested and signed off 2026-09-27 — **milestone closed.** Sub-slicing + locked decisions below.
 
 **Scope**
 - [ ] `indicators` table: `name`, `slug`, `type` (one of the current indicator families), `expression` (jsonb JsonLogic), `enabled`, `is_builtin`, `weight`, `deleted_at` (soft delete), timestamps
@@ -934,7 +934,7 @@ Turn the hardcoded screener signals into user-defined, named indicators built on
 
 **Deferred / future (post-M19b)**
 - **Configurable Pass 1.** The Pass-1 gate (`MIN_AVG_VOLUME`, `MIN_PRICE`/`MAX_PRICE`, `is_etf`) is currently hardcoded in `screener.py`. Make it user-configurable (likely `app_settings` columns or a small `screener_config` row) so the tradeable universe isn't fixed. Touches `pass1_filter()` and, by extension, the universe that `/rules/preview-universe` reports against. Independent quick win; no dependency on the M19b slices.
-- **Supabase row-cap check on screener bulk reads** — `feature_context._recent_bars_by_symbol` uses `.limit(len(symbols)*20)` and `indicator_cache.get_latest_snapshots` sets none; if the project's max-rows cap (default 1000) applies, a large Pass-1 universe would silently get short `vol_20d` windows / dropped snapshots. Pre-existing pattern (not an M19 regression) — verify the project setting or paginate. Surfaced by the M19 re-review.
+- ~~**Supabase row-cap check on screener bulk reads**~~ — **confirmed live 2026-09-27 (cap = 1000; the Screener got 2–3 volume bars/ticker instead of 20).** Scheduled as M20 slice 0.
 - **Builder: `between` with low > high** is accepted and simply never fires; could warn inline.
 - **Full-universe preview memoization** — cache `build_feature_contexts(pass1_survivors)` with a short TTL if repeated previews feel slow (skip until measured).
 
@@ -1005,56 +1005,74 @@ An app-wide UX pass before M20 adds more UI. Every later milestone builds forms 
 
 ### 20. ⬜ Candlestick pattern recognition
 
-Identify common candlestick patterns and their meanings, and expose them as variables to the engine so they're usable anywhere indicators are.
+Identify common candlestick patterns and expose them as rule-engine variables, so they're usable anywhere signals are (and in M21 alerts) with zero engine changes. Preceded by a data-access fix (slice 0) that the audit showed is a live bug.
 
-**Scope**
-- [ ] Detect common patterns: doji, engulfing, hammer, shooting star, harami, morning/evening star, marubozu, spinning top, etc.
-- [ ] **Library decision (open question):** [TA-Lib](https://ta-lib.github.io/ta-lib-python/func_groups/pattern_recognition.html) exposes 60+ `CDL*` functions returning +100/−100/0 (bullish/bearish/none) — the standard, but requires the TA-Lib C library at build time (a real consideration on Render). Alternatives: a pandas-ta subset (already in stack) or a small pure-Python implementation of the ~15 highest-value patterns
-- [ ] Pattern metadata (bullish/bearish/neutral + plain-English meaning) for the in-app reference + tooltips
-- [ ] Expose pattern flags as boolean variables in the feature dict → immediately usable in custom indicators (M19) and alerts (M21) with no special-casing
-- [ ] Storage decision: compute on the fly vs persist (columns or a `patterns` jsonb on `indicator_snapshots`)
-- [ ] Tests: pattern detection against known fixtures, feature-dict exposure
+**Status: planned — decisions locked 2026-09-27.** Priorities: simplicity, a curated list that can grow later, efficient storage, usability in the builder.
 
-**Dependencies:** M18 (to be usable in expressions); otherwise standalone.
+#### Slice 0 — Bulk-read fixes (live bug, found in the M20 audit)
 
-#### Technical plan (Phase B)
+**The problem, measured on the live DB (2026-09-27):** PostgREST caps every response at **1000 rows** (confirmed: `limit(5000)` returns 1000). `ohlcv_cache` holds ~102k rows and `indicator_snapshots` ~11k. Several bulk reads fetch per-row history and reduce it in Python, so they are silently truncated:
 
-**Library decision — TA-Lib (the deployment objection is gone).** As of TA-Lib v0.6.5+ the Python package ships [prebuilt manylinux wheels that bundle the C library](https://pypi.org/project/TA-Lib/) (v0.7.0 covers Python 3.10–3.14), so `pip install TA-Lib` works on Render with no source build, and `conda install -c conda-forge ta-lib` covers local Windows dev. That removes the one real reason to avoid it. TA-Lib gives 60+ `CDL*` pattern functions, each returning `+100 / -100 / 0` (bullish / bearish / none) from OHLC arrays — battle-tested, so we don't own pattern-detection correctness. (Fallbacks if an install ever breaks: the small pandas-ta subset already in-stack, or a pure-Python implementation of ~15 patterns. Not recommended given wheels now work.)
+| Read | Used by | Measured effect |
+|---|---|---|
+| `feature_context._recent_bars_by_symbol` (`.limit(N×20)`) | Screener Pass 2, universe preview, Watchlist scores | **2–3 bars per symbol instead of 20** for the 370 Pass-1 survivors, so `vol_20d` is really a ~3-day average and the **Volume Expansion signal is effectively wrong in every screener run** |
+| `screener._get_recent_volumes` (same pattern) | legacy volume helper | same truncation |
+| `indicator_cache.get_latest_snapshots` (no limit, all history, dedupe in Python) | feature context, Watchlist table, intraday alerts | Only the newest 1000 rows (currently Sept 11–25) are seen. Tickers whose latest snapshot is older **silently lose their snapshot** (6 stale tickers today). The window shrinks as history grows |
+| `ohlcv_cache` latest closes (no limit) | Watchlist prices, position monitor | same shape; latent |
 
-**Variable representation.** Each pattern becomes a signed-int variable in the feature dict — `cdl_engulfing ∈ {-100, 0, 100}` — which is the canonical form expressions read (`{"==":[{"var":"cdl_engulfing"},100]}`). For ergonomics in the builder, the registry also advertises derived booleans (`cdl_engulfing_bull`, `cdl_engulfing_bear`) computed from the sign. This keeps the engine unchanged (M18 seam: patterns are just more variables) while making rules readable.
+**N+1 loops (one or two queries per symbol):** `universe.update_ticker_metadata` (2 per ticker, ~1000 round trips every Saturday), `bulk_check_freshness` / `is_cache_fresh` in loops (1 per ticker), `scanner._get_prior_snapshots` (1 per watchlist ticker).
 
-**Curated set.** Surface ~15–20 high-value patterns rather than all 60 to avoid overwhelming the builder: doji (+ dragonfly/gravestone), hammer, inverted hammer, hanging man, shooting star, bullish/bearish engulfing, harami, morning star, evening star, piercing, dark cloud cover, three white soldiers, three black crows, marubozu, spinning top. The full set stays available behind a flag if wanted.
+**Fix: reduce in Postgres, return one row per symbol.** Migration 004 adds SQL functions (called with `.rpc()`), each returning ≤ one row per symbol, so ~500-symbol calls stay under the cap in a single round trip using the existing `(symbol, date DESC)` indexes:
+- `latest_indicator_snapshots(p_symbols text[])` — `DISTINCT ON (symbol) … ORDER BY symbol, date DESC`
+- `prior_indicator_snapshots(p_symbols text[])` — the second-newest row per symbol (crossover detection)
+- `ohlcv_summary(p_symbols text[], p_window int DEFAULT 20)` — per symbol: `last_date`, `last_close`, `bar_count`, `vol_3d`, `vol_20d` (the average over the trailing window), `last_fetched_at`. Replaces the volume averages, latest closes, freshness checks, and `latest_fetch_at`
+- `refresh_ticker_metadata(p_symbols text[])` — one `UPDATE tickers … FROM (aggregate)` for `last_price` and `avg_volume`
 
-**Computation & storage**
-- Compute inside the existing indicator pipeline (`indicators.py compute_indicators` already loads the OHLC bars) — call the curated `CDL*` functions on the same DataFrame, take the most-recent bar's value per pattern
-- Multi-bar patterns need history (e.g. three-white-soldiers needs 3+ bars); reuse the existing `MIN_BARS` guard, emit `0`/None when insufficient
-- **Storage:** migration `004_candlesticks.sql` → `ALTER indicator_snapshots ADD COLUMN patterns jsonb` holding `{pattern_slug: signed_int}`. Keeps it fully dynamic (no column-per-pattern) and chartable/historical
-- `feature_context.build_feature_context` merges `patterns` into the flat variable dict and `VARIABLE_REGISTRY` gains a `candlestick` group (so they auto-appear in the M19/M21 builders)
+Python call sites switch to these behind their existing function signatures, so callers don't change.
 
-**Metadata (`services/candlesticks.py`)**
-- `CURATED_PATTERNS` — the CDL function list + slugs
-- `CANDLESTICK_META` — per pattern: display name, direction (bullish/bearish/neutral), category (reversal/continuation), and a plain-English meaning, for tooltips now and the M22 strategy reference later
-- `compute_patterns(df) -> dict[slug, int]`
+**Deliberate staleness rule (replaces accidental truncation):** screener and universe-preview scoring skip snapshots older than `MAX_SNAPSHOT_AGE_DAYS = 10` (one missed weekly refresh of tolerance) and log the count. The Watchlist still shows old snapshots, with their date.
 
-**Integration (zero engine changes)**
-- M19 indicators can now be built on patterns, e.g. a `bullish_reversal` indicator = `{"or":[{"==":[{"var":"cdl_engulfing"},100]},{"==":[{"var":"cdl_hammer"},100]}]}`
-- M21 alerts likewise (`bb_squeeze AND cdl_hammer_bull`)
+**Also noted:** CTRA, HOLX and SEE have had no fresh data since April, EA/AVB/EQR since August, and CMA has never had a snapshot. That's a universe-maintenance issue (delisted, renamed or failing fetches), tracked separately and not part of M20.
 
-**UI (kept light for M20)**
-- Patterns appear automatically as variables in the rule builder (from the registry) — no bespoke work
-- Surface detected patterns as badges on Watchlist/Chart rows, with the `CANDLESTICK_META` meaning in a tooltip
-- The full pattern **reference** (glossary of meanings) is deferred to M22's strategy library to avoid duplication — M20 ships the data + tooltips, M22 gives it a home page
+#### Locked decisions
 
-**Tests** (`test_candlesticks.py`)
-- Detection against hand-crafted OHLC fixtures that unambiguously form a hammer / bullish engulfing / doji (assert sign + magnitude)
-- Short-history guard → no crash, emits 0/None
-- `patterns` jsonb storage round-trip; feature-dict + registry exposure of pattern variables
-- A rule referencing a pattern evaluates correctly through the M18 engine
+| Decision | Choice | Why |
+|---|---|---|
+| Library | **TA-Lib** (`CDL*` functions); verify the install on Render + local conda first | Battle-tested detection. Newer versions reportedly ship prebuilt wheels. Fallback: pandas-ta subset / hand-rolled |
+| Pattern set | **Curated 16 patterns** (below); more can be added later with one line each | Usable builder; adding a pattern needs no schema change |
+| Representation | **Booleans only, direction in the name** (`cdl_hammer`, `cdl_engulfing_bull`, `cdl_engulfing_bear`) | The builder already handles booleans ("is true"); no `== 100` rules. Signed ints dropped for simplicity |
+| Recency | **Two variants per variable: latest bar, and "within the last 5 bars"** (`cdl_hammer_5d`) | The universe refreshes weekly, so latest-bar-only would show the Screener just Friday's candle. The 5-bar window covers the trading week |
+| Storage | **`indicator_snapshots.extra jsonb`, sparse: only `true` keys stored**. `NULL` = not computed; `{}` = computed, nothing fired | A handful of bytes per row. Generic name reused by future computed variables (e.g. parameterized `rsi_10`) without another migration |
+| Reading | `feature_context` fills curated keys as `false` when `extra` is non-null, and leaves them `None` when it's `NULL` | Null-safe engine: rules never fire on uncomputed rows |
+| Timeframe | **Daily candles only** | All cached data is daily. Weekly patterns would need resampling (deferred) |
+| UI | Variables auto-appear in the builder in two groups (**Candlesticks — latest bar**, **Candlesticks — last 5 bars**); Watchlist rows get pattern chips with meaning tooltips | Light M20 UI; glossary page and chart markers deferred to M22 |
 
-**Open decisions**
-- **Curated ~15–20 vs. all 60 patterns** surfaced in the UI (Rec: curated, full set behind a flag)
-- **Store curated only, or all detected patterns** in the `patterns` jsonb (Rec: store curated to keep snapshots lean; widen later if needed)
-- **Representation:** signed-int canonical + derived booleans (recommended) vs. booleans only
+**Curated patterns (→ variables):**
+- **Bullish:** hammer, inverted hammer, dragonfly doji, morning star, piercing line, three white soldiers
+- **Bearish:** hanging man, shooting star, gravestone doji, evening star, dark cloud cover, three black crows
+- **Two-sided (`_bull` / `_bear`):** engulfing, harami, marubozu
+- **Neutral (indecision):** doji, spinning top
+
+That's 20 latest-bar variables + 20 five-bar variables = 40, in two builder groups.
+
+#### Time windows: how they work
+
+- **Candle timeframe:** daily bars.
+- **Pattern length:** fixed by each pattern's definition (1, 2 or 3 bars), not tunable.
+- **TA-Lib context window:** "long body", "small body", "long shadow" etc. are judged against a rolling average of recent candles (TA-Lib's standard candle settings, about 5–10 bars). Standard defaults, not exposed.
+- **History needed:** ~15 bars. `compute_indicators` already loads 200 and requires `MIN_BARS = 60`.
+- **Which bar is "latest":** the newest cached bar. Watchlist tickers get it daily (EOD 16:15), the universe weekly (Saturday = Friday's candle). **Update Now** during market hours computes on a still-forming candle; the 16:15 EOD run overwrites it (same caveat as every other indicator).
+- **Recency window:** `RECENT_BARS = 5` is a constant. Changing it means one constant plus a Recompute; adding another window (e.g. `_10d`) means a new suffix, still no migration. **User-chosen per-rule windows are deferred** (they'd need patterns computed at evaluation time from bars).
+
+#### Slices
+
+0. **Bulk-read fixes** (above) plus migration 004 (`extra` column + SQL functions), with regression tests on the Python side and a read-only verification against live after the migration
+1. **Pattern engine:** verify the TA-Lib install; `services/candlesticks.py` (`CURATED_PATTERNS`, `CANDLESTICK_META` with name/direction/meaning, `compute_patterns(df) -> dict`); hook into `compute_indicators` writing sparse `extra`; tests with hand-made OHLC fixtures (hammer, engulfing bull/bear, doji), a short-history guard, and 5-bar recency
+2. **Engine exposure:** `feature_context` merges and fills `extra`; `VARIABLE_REGISTRY` gains the two candlestick groups; a rule on a pattern evaluates end to end; the builder lists them
+3. **UI:** Watchlist pattern chips (latest bar, with tooltip meaning); user guide + smoke test
+4. **Rollout:** apply migration 004 manually in Supabase → deploy → admin **Recompute Indicators** once to fill the current bar for the whole universe
+
+**Dependencies:** M18 (engine), M19 (builder). Standalone otherwise.
 
 ---
 
