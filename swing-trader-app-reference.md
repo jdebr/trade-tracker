@@ -787,7 +787,7 @@ A single, reusable boolean-expression engine that both custom indicators (M19) a
 
 #### Technical plan (Phase B)
 
-**Format vs. evaluator.** Adopt the JsonLogic *format* (the interchange standard) so the same rule JSON is stored in `jsonb`, shipped to the browser, and built/validated there with `json-logic-js`. But evaluate on the backend with a small strict interpreter (~60 lines) rather than stock JsonLogic, for **trading-safe null semantics**: any comparison with a missing/None operand evaluates to `False`, while `and`/`or` compose normally (so `bb_squeeze OR rsi_14 < 35` still fires on the squeeze even when `rsi_14` is null). To keep the builder's preview identical to production, **preview evaluates via a backend endpoint, never client-side.**
+**Format vs. evaluator.** Adopt the JsonLogic *format* (the interchange standard) so the same rule JSON is stored in `jsonb`, shipped to the browser, and built/validated there with `json-logic-js`. But evaluate on the backend with a small strict interpreter (~60 lines) rather than stock JsonLogic, for **trading-safe null semantics**: a missing/None value is *unknown* (three-valued, like SQL NULL): a comparison with it is unknown, `!unknown` stays unknown, `and`/`or` follow Kleene logic, and an unknown final result doesn't fire. So `bb_squeeze OR rsi_14 < 35` still fires on the squeeze when `rsi_14` is null, but `NOT (rsi_14 < 35)` and "x is false" don't fire on a missing value. *(Tightened in M20: `!` used to turn a missing value into `true`.)* To keep the builder's preview identical to production, **preview evaluates via a backend endpoint, never client-side.**
 
 **New files (backend)**
 - `services/rule_engine.py`
@@ -1003,11 +1003,11 @@ An app-wide UX pass before M20 adds more UI. Every later milestone builds forms 
 
 ---
 
-### 20. ⬜ Candlestick pattern recognition
+### 20. 🔄 Candlestick pattern recognition
 
 Identify common candlestick patterns and expose them as rule-engine variables, so they're usable anywhere signals are (and in M21 alerts) with zero engine changes. Preceded by a data-access fix (slice 0) that the audit showed is a live bug.
 
-**Status: planned — decisions locked 2026-09-27.** Priorities: simplicity, a curated list that can grow later, efficient storage, usability in the builder.
+**Status: slices 0–3 built 2026-09-27 (slice 0 live; migration 004 applied and verified: all 370 Pass-1 tickers now get 20 bars). Rollout + smoke test (`docs/m20-smoke-test.md`) pending.** Decisions locked 2026-09-27. Priorities: simplicity, a curated list that can grow later, efficient storage, usability in the builder.
 
 #### Slice 0 — Bulk-read fixes (live bug, found in the M20 audit)
 
@@ -1066,11 +1066,11 @@ That's 20 latest-bar variables + 20 five-bar variables = 40, in two builder grou
 
 #### Slices
 
-0. **Bulk-read fixes** (above) plus migration 004 (`extra` column + SQL functions), with regression tests on the Python side and a read-only verification against live after the migration
-1. **Pattern engine:** verify the TA-Lib install; `services/candlesticks.py` (`CURATED_PATTERNS`, `CANDLESTICK_META` with name/direction/meaning, `compute_patterns(df) -> dict`); hook into `compute_indicators` writing sparse `extra`; tests with hand-made OHLC fixtures (hammer, engulfing bull/bear, doji), a short-history guard, and 5-bar recency
-2. **Engine exposure:** `feature_context` merges and fills `extra`; `VARIABLE_REGISTRY` gains the two candlestick groups; a rule on a pattern evaluates end to end; the builder lists them
-3. **UI:** Watchlist pattern chips (latest bar, with tooltip meaning); user guide + smoke test
-4. **Rollout:** apply migration 004 manually in Supabase → deploy → admin **Recompute Indicators** once to fill the current bar for the whole universe
+0. ✅ **Bulk-read fixes** (above) plus migration 004 (`extra` column + SQL functions), with regression tests on the Python side and a read-only verification against live after the migration
+1. ✅ **Pattern engine:** TA-Lib 0.8.1 (prebuilt wheels for Windows + Linux, Python 3.12–3.14, C library bundled); `services/candlesticks.py` (`CURATED_PATTERNS` with label/direction/meaning, `PATTERN_VARIABLES`, `compute_patterns(df) -> dict`); hook into `compute_indicators` writing sparse `extra`; tests with hand-made OHLC fixtures (hammer, engulfing bull/bear, doji), a short-history guard, and 5-bar recency
+2. ✅ **Engine exposure:** `feature_context` merges and fills `extra`; `VARIABLE_REGISTRY` gains the two candlestick groups; a rule on a pattern evaluates end to end; the builder lists them. **Found and fixed on the way:** the builder writes "is false" as `{"!": [var]}`, and the engine returned `!null → true`, so "X is false" (and any `NOT (…)` over a missing value) fired on uncomputed data. The engine now uses three-valued (Kleene) logic; see M18's null semantics
+3. ✅ **UI:** Watchlist pattern chips (latest bar, with tooltip meaning); user guide + smoke test
+4. **Rollout:** ✅ apply migration 004 manually in Supabase → deploy → admin **Recompute Indicators** once to fill the current bar for the whole universe
 
 **Dependencies:** M18 (engine), M19 (builder). Standalone otherwise.
 

@@ -22,6 +22,9 @@ Public API:
 import logging
 from datetime import date, timedelta
 
+from app.services.candlesticks import (
+    PATTERN_VARIABLE_NAMES, PATTERN_VARIABLES, RECENT_BARS, RECENT_SUFFIX,
+)
 from app.services.indicator_cache import get_latest_snapshots
 from app.services.ohlcv_cache import get_cached_bars, get_ohlcv_summary
 
@@ -69,6 +72,19 @@ VARIABLE_REGISTRY: list[dict] = [
      "description": "Average daily volume over the last 20 trading days."},
 ]
 
+# M20 candlestick patterns: a latest-bar and a recent-window variable each.
+VARIABLE_REGISTRY += [
+    {"name": v["name"], "type": "boolean", "label": v["label"], "group": "candlesticks · latest bar",
+     "direction": v["direction"],
+     "description": f"{v['direction'].capitalize()} pattern on the latest daily candle. {v['meaning']}"}
+    for v in PATTERN_VARIABLES
+] + [
+    {"name": v["name"] + RECENT_SUFFIX, "type": "boolean", "label": f"{v['label']} (last {RECENT_BARS} bars)",
+     "group": f"candlesticks · last {RECENT_BARS} bars", "direction": v["direction"],
+     "description": f"{v['direction'].capitalize()} pattern on any of the last {RECENT_BARS} daily candles. {v['meaning']}"}
+    for v in PATTERN_VARIABLES
+]
+
 VARIABLE_NAMES: frozenset[str] = frozenset(e["name"] for e in VARIABLE_REGISTRY)
 VARIABLE_LABELS: dict[str, str] = {e["name"]: e["label"] for e in VARIABLE_REGISTRY}
 
@@ -113,8 +129,20 @@ def _bar_stats(bars: list[dict]) -> dict:
     }
 
 
+def _pattern_flags(snapshot: dict) -> dict:
+    """Candlestick variables from the snapshot's sparse `extra`: stored keys are
+    the ones that fired, so a computed row fills the rest as False. A row whose
+    patterns were never computed (`extra` NULL) gives None, so rules on them
+    don't fire on missing data."""
+    extra = snapshot.get("extra")
+    if extra is None:
+        return dict.fromkeys(PATTERN_VARIABLE_NAMES)
+    return {name: bool(extra.get(name, False)) for name in PATTERN_VARIABLE_NAMES}
+
+
 def _assemble_stats(snapshot: dict, stats: dict) -> dict:
     ctx = {name: _coerce(name, snapshot.get(name)) for name in _SNAPSHOT_FIELDS}
+    ctx.update(_pattern_flags(snapshot))
     ctx["close"] = stats.get("close")
     ctx["vol_3d"] = stats.get("vol_3d")
     ctx["vol_20d"] = stats.get("vol_20d")

@@ -346,3 +346,23 @@ describe("last update", () => {
     await waitFor(() => expect(screen.getByText(/last update/i).parentElement).not.toHaveTextContent(/never/i))
   })
 })
+
+// ---------------------------------------------------------------------------
+// Candlestick pattern chips (M20)
+// ---------------------------------------------------------------------------
+
+describe("pattern chips", () => {
+  it("shows latest-bar patterns only, without the direction suffix", async () => {
+    renderPage()
+    expect((await screen.findAllByText("Hammer")).length).toBeGreaterThan(0)       // AAPL
+    expect(screen.getAllByText("Engulfing").length).toBeGreaterThan(0)             // MSFT, bearish
+    expect(screen.queryByText(/last 5 bars/)).not.toBeInTheDocument()              // recent variants aren't chips
+  })
+
+  it("explains a pattern in its tooltip", async () => {
+    renderPage()
+    const [chip] = await screen.findAllByText("Hammer")
+    await userEvent.hover(chip)
+    expect((await screen.findAllByText(/possible bottom/i)).length).toBeGreaterThan(0)
+  })
+})

@@ -12,12 +12,14 @@ Indicators computed:
     Tier 1: RSI(14), MACD(12/26/9), BB(20/2), EMA ribbon (8/21/50)
             + bb_width and bb_squeeze flag
     Tier 2: ATR(14), OBV
+    M20:    curated candlestick patterns → `extra` (sparse jsonb, see candlesticks.py)
 """
 
 import logging
 import math
 import pandas as pd
 import pandas_ta as ta
+from app.services.candlesticks import compute_patterns
 from app.services.ohlcv_cache import get_cached_bars
 
 logger = logging.getLogger(__name__)
@@ -156,4 +158,6 @@ def compute_indicators(symbol: str) -> dict | None:
         "ema_50":      _safe(last[ema50_col]) if ema50_col else None,
         "atr_14":      _safe(last[atr_col])   if atr_col   else None,
         "obv":         obv_int,
+        # Only the pattern flags that fired; {} = computed, nothing fired.
+        "extra":       compute_patterns(df),
     }

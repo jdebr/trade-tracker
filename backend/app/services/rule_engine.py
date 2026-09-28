@@ -10,13 +10,18 @@ We evaluate with a small strict interpreter rather than stock JsonLogic because
 JsonLogic inherits JavaScript's null coercion (``null < 35`` → ``true``), which is
 dangerous for trading rules: a missing indicator must never satisfy a comparison.
 
-Strict null semantics:
-  - any comparison (== != < <= > >=) with a null operand  -> False
+Strict null semantics (three-valued, like SQL NULL): a missing value is
+*unknown*, and a rule fires only if it is definitely true.
+  - any comparison (== != < <= > >=) with a null operand  -> unknown
   - any arithmetic (+ - * /) with a null operand           -> None (propagates)
-  - a bare variable {"var": x} is truthy-cast; null is falsy
-  - and / or / ! compose over the above and return real booleans
+  - a bare variable {"var": x} is truthy-cast; null is unknown
+  - ! unknown = unknown (so "x is false" never fires on a missing x)
+  - and: any false -> false, else any unknown -> unknown, else true
+  - or:  any true  -> true,  else any unknown -> unknown, else false
+  - the rule's final result casts unknown to False (doesn't fire)
 
-so ``bb_squeeze OR rsi_14 < 35`` still fires on the squeeze when ``rsi_14`` is null.
+so ``bb_squeeze OR rsi_14 < 35`` still fires on the squeeze when ``rsi_14`` is null,
+while ``NOT (rsi_14 < 35)`` does not fire when it is null.
 
 `evaluate` assumes a structurally valid rule and raises `RuleError` on a malformed
 one; callers that run stored rules in bulk (the screener, the alert engine) should
@@ -59,6 +64,23 @@ def _truthy(value) -> bool:
     return False if value is None else bool(value)
 
 
+def _tri(value) -> bool | None:
+    """Three-valued truth: None stays unknown; everything else truthy-cast."""
+    return None if value is None else bool(value)
+
+
+def _and(vals: list) -> bool | None:
+    if any(v is False for v in vals):
+        return False
+    return None if any(v is None for v in vals) else True
+
+
+def _or(vals: list) -> bool | None:
+    if any(v is True for v in vals):
+        return True
+    return None if any(v is None for v in vals) else False
+
+
 def _var_name(args):
     """A `var` operand is either "name" or ["name"] (JsonLogic allows both)."""
     if isinstance(args, list):
@@ -83,9 +105,9 @@ def _literal_error(node) -> str | None:
 
 
 def _compare(op: str, vals: list):
-    # Strict null: any null operand makes the comparison unsatisfiable.
+    # Strict null: any null operand makes the comparison unknown (never true).
     if any(v is None for v in vals):
-        return False
+        return None
     try:
         if op == "==":
             return vals[0] == vals[1]
@@ -161,13 +183,14 @@ def _eval(node, features: dict, depth: int = 0):
     if op in ARITHMETIC_OPS:
         return _arith(op, [_eval(a, features, depth + 1) for a in args])
     if op == "and":
-        return all(_truthy(_eval(a, features, depth + 1)) for a in args)
+        return _and([_tri(_eval(a, features, depth + 1)) for a in args])
     if op == "or":
-        return any(_truthy(_eval(a, features, depth + 1)) for a in args)
+        return _or([_tri(_eval(a, features, depth + 1)) for a in args])
     if op == "!":
-        return not _truthy(_eval(args[0], features, depth + 1))
+        v = _tri(_eval(args[0], features, depth + 1))
+        return None if v is None else not v
     # op == "!!"
-    return _truthy(_eval(args[0], features, depth + 1))
+    return _tri(_eval(args[0], features, depth + 1))
 
 
 def evaluate(rule, features: dict) -> bool:

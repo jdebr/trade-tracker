@@ -8,6 +8,7 @@ class VariableMeta(BaseModel):
     label: str
     group: str
     description: str
+    direction: str | None = None   # candlestick patterns: bullish / bearish / neutral
 
 
 class VariablesResponse(BaseModel):

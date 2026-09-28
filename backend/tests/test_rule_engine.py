@@ -69,6 +69,19 @@ def test_and_or_not():
     assert evaluate({"!":   [{"var": "bb_squeeze"}]}, FEATURES) is False
 
 
+@pytest.mark.parametrize("rule, expected", [
+    ({"!": [{"var": "missing"}]}, False),                              # "is false" on missing
+    ({"!": [{"<": [{"var": "missing"}, 35]}]}, False),                 # NOT (null < 35)
+    ({"!": [{"!": [{"var": "missing"}]}]}, False),
+    ({"or": [{"var": "bb_squeeze"}, {"<": [{"var": "missing"}, 35]}]}, True),   # true OR unknown
+    ({"and": [{"var": "bb_squeeze"}, {"<": [{"var": "missing"}, 35]}]}, False), # true AND unknown
+    ({"!": [{"and": [{">": [{"var": "rsi_14"}, 40]}, {"var": "missing"}]}]}, True),  # NOT (false AND unknown)
+    ({"!": [{"or": [{"var": "bb_squeeze"}, {"var": "missing"}]}]}, False),           # NOT (true OR unknown)
+])
+def test_missing_values_are_unknown_not_false(rule, expected):
+    assert evaluate(rule, FEATURES) is expected
+
+
 def test_bare_var_truthy_cast():
     assert evaluate({"var": "bb_squeeze"}, FEATURES) is True
     assert evaluate({"var": "bb_squeeze"}, {"bb_squeeze": False}) is False

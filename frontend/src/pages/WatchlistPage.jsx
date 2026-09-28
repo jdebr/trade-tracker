@@ -11,6 +11,8 @@ import { Combobox } from "@/components/ui/Combobox"
 import { SortHeader } from "@/components/ui/SortHeader"
 import ExitPlanDialog from "@/components/ExitPlanDialog"
 import { ScoreBadge, ActiveSignalsTip, FiredSignalsTip } from "@/components/SignalScore"
+import { PatternChips } from "@/components/PatternChips"
+import { useRuleVariables } from "@/lib/useRuleVariables"
 import { INDICATORS } from "@/lib/indicators"
 import { useSort } from "@/lib/useSort"
 import { useKeyedMutation } from "@/lib/useKeyedMutation"
@@ -297,7 +299,9 @@ function RowScore({ row, activeRules }) {
   )
 }
 
-function WatchlistTable({ rows, nameMap, openSymbols, activeRules, sortKey, sortDir, onSort, onPlan, onRemove }) {
+const PATTERNS_TIP = "Candlestick patterns on the latest daily candle. Green: bullish, red: bearish, grey: indecision. Hover a chip for its meaning."
+
+function WatchlistTable({ rows, nameMap, openSymbols, activeRules, variables, sortKey, sortDir, onSort, onPlan, onRemove }) {
   const headerProps = { activeKey: sortKey, dir: sortDir, onSort }
   return (
     <div className="hidden md:block overflow-x-auto rounded-lg border border-border">
@@ -311,6 +315,9 @@ function WatchlistTable({ rows, nameMap, openSymbols, activeRules, sortKey, sort
               tooltip={<ActiveSignalsTip rules={activeRules} />}
               {...headerProps}
             />
+            <th className="px-4 py-3 text-left font-medium">
+              <Tooltip content={PATTERNS_TIP}><span className="cursor-help">Patterns</span></Tooltip>
+            </th>
             <SortHeader label="RSI" sortKey="rsi_14" align="right" tooltip={indicatorTip("rsi_14")} {...headerProps} />
             <SortHeader label="BB Squeeze" sortKey="bb_squeeze" align="center" tooltip={indicatorTip("bb_squeeze")} {...headerProps} />
             <SortHeader label="MACD Hist" sortKey="macd_hist" align="right" tooltip={indicatorTip("macd_hist")} {...headerProps} />
@@ -339,6 +346,7 @@ function WatchlistTable({ rows, nameMap, openSymbols, activeRules, sortKey, sort
                 {row.price != null ? `$${Number(row.price).toFixed(2)}` : "—"}
               </td>
               <td className="px-4 py-3 text-center"><RowScore row={row} activeRules={activeRules} /></td>
+              <td className="px-4 py-3"><PatternChips extra={row.extra} variables={variables} /></td>
               <td className={cn("px-4 py-3 text-right tabular-nums font-medium", rsiColour(row.rsi_14))}>{fmt(row.rsi_14, 1)}</td>
               <td className="px-4 py-3 text-center"><BoolDot value={row.bb_squeeze} /></td>
               <td className={cn("px-4 py-3 text-right tabular-nums", macdColour(row.macd_hist))}>{fmt(row.macd_hist)}</td>
@@ -359,7 +367,7 @@ function WatchlistTable({ rows, nameMap, openSymbols, activeRules, sortKey, sort
 // Cards (mobile)
 // ---------------------------------------------------------------------------
 
-function WatchlistCards({ rows, nameMap, openSymbols, activeRules, onPlan, onRemove }) {
+function WatchlistCards({ rows, nameMap, openSymbols, activeRules, variables, onPlan, onRemove }) {
   return (
     <div className="md:hidden space-y-3">
       {rows.map((row) => (
@@ -388,6 +396,10 @@ function WatchlistCards({ rows, nameMap, openSymbols, activeRules, onPlan, onRem
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Score</span>
               <RowScore row={row} activeRules={activeRules} />
+            </div>
+            <div className="col-span-2 flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Patterns</span>
+              <PatternChips extra={row.extra} variables={variables} />
             </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">RSI</span>
@@ -468,6 +480,8 @@ export default function WatchlistPage() {
     enabled: symbols.length > 0,
   })
   // Under the "signal-rules" prefix, so editing a signal refreshes the tooltip.
+  // Registry metadata (labels, direction, meaning) for the pattern chips.
+  const variables = useRuleVariables()
   const { data: activeRules = [] } = useQuery({
     queryKey: ["signal-rules", "active"],
     queryFn: () => api.get("/signal-rules?enabled=true"),
@@ -640,11 +654,11 @@ export default function WatchlistPage() {
             </div>
           )}
           <WatchlistTable
-            rows={sorted} nameMap={nameMap} openSymbols={openSymbols} activeRules={activeRules}
+            rows={sorted} nameMap={nameMap} openSymbols={openSymbols} activeRules={activeRules} variables={variables}
             sortKey={sortKey} sortDir={sortDir} onSort={requestSort}
             onPlan={setPlanningRow} onRemove={setPendingDelete}
           />
-          <WatchlistCards rows={sorted} nameMap={nameMap} openSymbols={openSymbols} activeRules={activeRules} onPlan={setPlanningRow} onRemove={setPendingDelete} />
+          <WatchlistCards rows={sorted} nameMap={nameMap} openSymbols={openSymbols} activeRules={activeRules} variables={variables} onPlan={setPlanningRow} onRemove={setPendingDelete} />
         </>
       )}
 

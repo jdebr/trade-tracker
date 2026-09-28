@@ -194,6 +194,7 @@ Your daily check-in view. One page to **manage** the tickers you're tracking and
 | Symbol | Ticker; hover for company name. A green **Open** badge appears if you hold a position in it. |
 | Price | Latest close from the cache |
 | Score | Live signal score (`achieved / max`) against your **current** active signals and the latest data — the same number a screener run would give it right now. Hover the **Score** header for the list of active signals; hover a row's badge to see which ones fired (✓/✗). `—` means no indicator data yet. |
+| Patterns | Candlestick patterns on the **latest daily candle**: green = bullish, red = bearish, grey = indecision. Hover a chip for what it means; up to three show, with **+N** for the rest. `—` means none fired (or patterns haven't been computed for that ticker yet). |
 | RSI | 14-day RSI. Red ≥ 70 (overbought), Blue ≤ 30 (oversold), Green 35–65 (neutral range) |
 | BB Squeeze | Filled dot = squeeze active (bands are tight; breakout may be coming) |
 | MACD Hist | Histogram value. Green = positive momentum, Red = negative |
@@ -397,6 +398,23 @@ As you build, three checks run live (on both screens):
 2. **Preview on \<symbol\>** — evaluates the rule against one ticker's latest data right now: *fires* or *doesn't fire*, with the actual values it used. The symbol picker is searchable and remembers your last choice.
 3. **Preview across universe** — a button that runs the rule against every ticker in the screener's tradeable universe on the current cached data and reports *"Matches N of M."* It's a fast sanity check on how selective the rule is; it doesn't re-fetch or recompute anything, and it evaluates the rule on its own (not as part of the full score).
 
+**Candlestick patterns.** The variable picker has two candlestick groups, each listing 20 yes/no variables for a curated set of 17 classic patterns. Engulfing, Harami and Marubozu come in bullish and bearish forms.
+
+- **Candlesticks · latest bar**: did the pattern form on the most recent daily candle?
+- **Candlesticks · last 5 bars**: did it form on any of the last five daily candles, i.e. this trading week?
+
+Use the **last 5 bars** versions for screener signals. The universe's data refreshes weekly, so "latest bar" there only ever sees Friday's candle. Watchlist tickers refresh daily, so either works for them. Patterns combine like anything else, e.g. *Engulfing (bullish) (last 5 bars) is true* **and** *RSI(14) < 40*.
+
+| Direction | Patterns |
+|---|---|
+| Bullish | Hammer, Inverted Hammer, Dragonfly Doji, Morning Star, Piercing Line, Three White Soldiers, Engulfing (bullish), Harami (bullish), Marubozu (bullish) |
+| Bearish | Hanging Man, Shooting Star, Gravestone Doji, Evening Star, Dark Cloud Cover, Three Black Crows, Engulfing (bearish), Harami (bearish), Marubozu (bearish) |
+| Indecision | Doji, Spinning Top |
+
+Some patterns overlap by definition: a gravestone doji is also a doji. A candle computed during market hours (**Update Now** before the close) is still forming; the 4:15 PM run replaces it with the final candle.
+
+**Missing data never makes a signal fire.** If a value a rule needs is missing (a new ticker, or patterns not yet computed), the condition counts as *unknown*, not true. That includes *is false* and "not" conditions: *Hammer is false* won't fire on a ticker whose patterns were never computed.
+
 **Editing vs. cloning — the one rule to know.** A signal's **expression is locked once created**. You can freely rename it, change its weight or description, and enable/disable it — but you **cannot change its logic in place**. To change the logic, use **Clone**: it opens a new signal pre-filled with the old expression for you to modify and save under a new name.
 
 Why the lock? Every closed trade records which signals fired at entry, by name. If you could silently redefine "RSI in Range" from *35–65* to *40–60*, every past trade's attribution would quietly become a lie, and the Reports edge analysis would be built on sand. Freezing the expression keeps a signal's name meaning exactly one thing, forever.
@@ -562,6 +580,7 @@ The intraday poll and EOD scan cover the **union of watchlist symbols and open-p
 | ATR | 14-day period |
 | OBV | Cumulative (no period) |
 | BB Squeeze threshold | Lowest 20th percentile of rolling 252-bar BB width |
+| Candlestick patterns | TA-Lib `CDL*` functions on daily candles, with TA-Lib's standard candle-size averages (~5–10 bars). "Last 5 bars" = the latest bar or any of the 4 before it. Stored sparsely in `indicator_snapshots.extra` |
 
 ### EOD Alert Conditions (exact thresholds)
 

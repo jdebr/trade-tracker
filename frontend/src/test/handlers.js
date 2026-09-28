@@ -243,14 +243,17 @@ export const MOCK_SNAPSHOTS = [
   {
     symbol: "AAPL", date: "2026-03-28",
     rsi_14: 52.3, bb_squeeze: true,  macd_hist: 0.45, ema_50: 205.0, atr_14: 3.2,
+    extra: { cdl_hammer: true, cdl_hammer_5d: true },
   },
   {
     symbol: "MSFT", date: "2026-03-28",
     rsi_14: 72.1, bb_squeeze: false, macd_hist: -0.2, ema_50: 410.0, atr_14: 5.8,
+    extra: { cdl_engulfing_bear: true },
   },
   {
     symbol: "JPM",  date: "2026-03-28",
     rsi_14: 28.4, bb_squeeze: false, macd_hist: 0.01, ema_50: 235.0, atr_14: 2.9,
+    extra: null,  // patterns not computed yet
   },
 ]
 
@@ -357,6 +360,12 @@ export const handlers = [
         { name: "bb_squeeze", type: "boolean", label: "BB Squeeze", group: "volatility", description: "Squeeze active" },
         { name: "close",      type: "number",  label: "Close",      group: "price",      description: "Latest close" },
         { name: "ema_50",     type: "number",  label: "EMA 50",     group: "trend",      description: "50-day EMA" },
+        { name: "cdl_hammer", type: "boolean", label: "Hammer", group: "candlesticks · latest bar", direction: "bullish",
+          description: "Bullish pattern on the latest daily candle. Possible bottom." },
+        { name: "cdl_engulfing_bear", type: "boolean", label: "Engulfing (bearish)", group: "candlesticks · latest bar", direction: "bearish",
+          description: "Bearish pattern on the latest daily candle. A strong reversal signal." },
+        { name: "cdl_hammer_5d", type: "boolean", label: "Hammer (last 5 bars)", group: "candlesticks · last 5 bars", direction: "bullish",
+          description: "Bullish pattern on any of the last 5 daily candles." },
       ],
     })
   ),
