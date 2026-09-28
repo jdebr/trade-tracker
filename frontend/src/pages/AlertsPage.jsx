@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { POSITION_ALERT_META } from "@/lib/exitMethods"
+import { SymbolLink } from "@/components/SymbolLink"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -77,7 +78,7 @@ function AlertCard({ alert, onAcknowledge, isAcknowledging }) {
     >
       <div className="flex flex-col gap-1.5 min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold tracking-wide text-sm">{alert.symbol}</span>
+          <SymbolLink symbol={alert.symbol} className="text-sm" />
           <AlertTypeBadge type={alert.alert_type} />
           {alert.details?.is_simulated && <Badge variant="secondary">SIM</Badge>}
           {alert.signal_score != null && (

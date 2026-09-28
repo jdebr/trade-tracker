@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip } from "@/components/ui/Tooltip"
 import ExitPlanDialog from "@/components/ExitPlanDialog"
 import { ScoreBadge } from "@/components/SignalScore"
+import { SymbolLink } from "@/components/SymbolLink"
 import { INDICATORS } from "@/lib/indicators"
 import { cn } from "@/lib/utils"
 
@@ -225,10 +226,8 @@ function ResultsTable({ rows, signalCols, nameMap, watchlistSet, openSymbols, on
               className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
             >
               <td className="px-4 py-3 text-muted-foreground">{row.rank}</td>
-              <td className="px-4 py-3 font-semibold tracking-wide">
-                <Tooltip content={nameMap.get(row.symbol)}>
-                  <span className="cursor-default">{row.symbol}</span>
-                </Tooltip>
+              <td className="px-4 py-3">
+                <SymbolLink symbol={row.symbol} name={nameMap.get(row.symbol)} />
                 {openSymbols.has(row.symbol) && <OpenPositionBadge />}
               </td>
               <td className="px-4 py-3"><ScoreCell row={row} /></td>
@@ -272,9 +271,7 @@ function ResultsCards({ rows, signalCols, nameMap, watchlistSet, openSymbols, on
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground w-5">#{row.rank}</span>
-              <Tooltip content={nameMap.get(row.symbol)}>
-                <span className="font-semibold tracking-wide cursor-default">{row.symbol}</span>
-              </Tooltip>
+              <SymbolLink symbol={row.symbol} name={nameMap.get(row.symbol)} />
               {openSymbols.has(row.symbol) && <OpenPositionBadge />}
             </div>
             <div className="flex items-center gap-2">

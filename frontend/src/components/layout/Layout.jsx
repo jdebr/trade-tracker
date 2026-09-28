@@ -1,9 +1,11 @@
 import { Outlet } from "react-router-dom"
 import Sidebar from "./Sidebar"
 import BottomNav from "./BottomNav"
+import TickerDetailsProvider from "@/components/TickerDetailsProvider"
 
 export default function Layout() {
   return (
+    <TickerDetailsProvider>
     <div className="flex min-h-screen bg-background text-foreground">
       <Sidebar />
 
@@ -14,5 +16,6 @@ export default function Layout() {
 
       <BottomNav />
     </div>
+    </TickerDetailsProvider>
   )
 }

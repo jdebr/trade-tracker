@@ -1003,11 +1003,11 @@ An app-wide UX pass before M20 adds more UI. Every later milestone builds forms 
 
 ---
 
-### 20. 🔄 Candlestick pattern recognition
+### 20. ✅ Candlestick pattern recognition
 
 Identify common candlestick patterns and expose them as rule-engine variables, so they're usable anywhere signals are (and in M21 alerts) with zero engine changes. Preceded by a data-access fix (slice 0) that the audit showed is a live bug.
 
-**Status: slices 0–3 built 2026-09-27 (slice 0 live; migration 004 applied and verified: all 370 Pass-1 tickers now get 20 bars). Rollout + smoke test (`docs/m20-smoke-test.md`) pending.** Decisions locked 2026-09-27. Priorities: simplicity, a curated list that can grow later, efficient storage, usability in the builder.
+**Status: slices 0–3 built 2026-09-27 (slice 0 live; migration 004 applied and verified: all 370 Pass-1 tickers now get 20 bars). Rolled out (Recompute run) and smoke-tested 2026-09-27; complete.** Decisions locked 2026-09-27. Priorities: simplicity, a curated list that can grow later, efficient storage, usability in the builder.
 
 #### Slice 0 — Bulk-read fixes (live bug, found in the M20 audit)
 
@@ -1070,9 +1070,23 @@ That's 20 latest-bar variables + 20 five-bar variables = 40, in two builder grou
 1. ✅ **Pattern engine:** TA-Lib 0.8.1 (prebuilt wheels for Windows + Linux, Python 3.12–3.14, C library bundled); `services/candlesticks.py` (`CURATED_PATTERNS` with label/direction/meaning, `PATTERN_VARIABLES`, `compute_patterns(df) -> dict`); hook into `compute_indicators` writing sparse `extra`; tests with hand-made OHLC fixtures (hammer, engulfing bull/bear, doji), a short-history guard, and 5-bar recency
 2. ✅ **Engine exposure:** `feature_context` merges and fills `extra`; `VARIABLE_REGISTRY` gains the two candlestick groups; a rule on a pattern evaluates end to end; the builder lists them. **Found and fixed on the way:** the builder writes "is false" as `{"!": [var]}`, and the engine returned `!null → true`, so "X is false" (and any `NOT (…)` over a missing value) fired on uncomputed data. The engine now uses three-valued (Kleene) logic; see M18's null semantics
 3. ✅ **UI:** Watchlist pattern chips (latest bar, with tooltip meaning); user guide + smoke test
-4. **Rollout:** ✅ apply migration 004 manually in Supabase → deploy → admin **Recompute Indicators** once to fill the current bar for the whole universe
+4. ✅ **Rollout:** apply migration 004 manually in Supabase → deploy → admin **Recompute Indicators** once to fill the current bar for the whole universe
 
 **Dependencies:** M18 (engine), M19 (builder). Standalone otherwise.
+
+---
+
+### 20.5 ✅ Ticker details panel
+
+A slide-out panel for one ticker, opened by clicking its symbol anywhere (Watchlist, Screener, Positions, Alerts). It's the home for per-ticker detail that doesn't belong in a table row, and the place later milestones add to (M21 alert history, M22 indicators, earnings, the LLM news summary from M23).
+
+**Status: built 2026-09-27; smoke test `docs/m20.5-smoke-test.md`.**
+
+**Why on demand, not stored.** Candlestick *history* (which day each pattern formed) is display-only, so it's computed per request from cached bars; TA-Lib takes microseconds. The stored `extra` flags stay, because screener/alert runs need patterns in bulk. A per-ticker panel also avoids the 1000-row cap that a whole-watchlist on-demand pass would hit.
+
+- **Backend:** `GET /tickers/{symbol}/details?days=10` (`services/ticker_details.py`) returns name/sector, latest close + change, 60 bars, `candlesticks.recent_patterns(df, days)` (every curated pattern per bar, newest first), latest snapshot, live signal evaluation (per-rule fired + formatted expression), open position with current R, and watchlist membership. Its six reads run concurrently: ~85 ms measured vs ~400 ms sequential. `days` 1–40; unknown symbol → 404.
+- **Frontend:** `TickerDetailsProvider` (in `Layout`) owns one Radix-dialog side sheet; `SymbolLink` opens it (plain text outside the provider). `Chart` gains `markers` (lightweight-charts `createSeriesMarkers`) and `interactive={false}`. The Charts page now keeps its symbol in `?symbol=`, so **Full chart** deep-links to any ticker.
+- **Deferred:** earnings date (a live yfinance call, too slow for the panel; wants a cached column first), pattern markers on the full Charts page, per-ticker alert history (M21).
 
 ---
 

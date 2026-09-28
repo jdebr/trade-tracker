@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { ExternalLink } from "lucide-react"
 import { subMonths, parseISO, isAfter } from "date-fns"
@@ -144,7 +145,11 @@ function SymbolPicker({ symbols, selected, onSelect }) {
 // Page
 // ---------------------------------------------------------------------------
 export default function ChartPage() {
-  const [symbol,    setSymbol]    = useState(null)
+  // The symbol lives in the URL (?symbol=), so the details panel's "Full chart"
+  // link — and any bookmark — opens straight to it, watchlisted or not.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const symbol = searchParams.get("symbol")?.toUpperCase() || null
+  const setSymbol = (s) => setSearchParams({ symbol: s }, { replace: true })
   const [chartType, setChartType] = useState("candlestick")
   const [zoom,      setZoom]      = useState(6)     // months; null = All
   const [showBB,    setShowBB]    = useState(true)
@@ -167,11 +172,6 @@ export default function ChartPage() {
     for (const t of tickerList) m.set(t.symbol, t.name)
     return m
   }, [tickerList])
-
-  // Auto-select first symbol once watchlist loads
-  useEffect(() => {
-    if (!symbol && watchlist.length > 0) setSymbol(watchlist[0].symbol)
-  }, [watchlist, symbol])
 
   const activeSymbol = symbol ?? watchlist[0]?.symbol ?? null
 

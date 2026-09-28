@@ -17,6 +17,7 @@ Public API:
     PATTERN_VARIABLES           list[dict]  (one per latest-bar variable)
     PATTERN_VARIABLE_NAMES      frozenset[str]  (latest + recent variants)
     compute_patterns(df)        -> dict[str, bool]  (only the keys that fired)
+    recent_patterns(df, bars)   -> list[dict]  (per-bar history, for display)
 """
 
 import logging
@@ -106,6 +107,37 @@ def _fires(values: np.ndarray, sign: int) -> np.ndarray:
     return values != 0
 
 
+_DIRECTION_ORDER = {"bullish": 0, "bearish": 1, "neutral": 2}
+
+
+def _raw_outputs(df) -> dict[str, np.ndarray]:
+    o, h, l, c = (df[col].to_numpy(dtype=np.float64) for col in ("Open", "High", "Low", "Close"))
+    return {fn: getattr(talib, fn)(o, h, l, c) for fn in {v["fn"] for v in PATTERN_VARIABLES}}
+
+
+def recent_patterns(df, bars: int = 10) -> list[dict]:
+    """
+    Every curated pattern that formed on each of the last `bars` candles, newest
+    first (then bullish, bearish, neutral). Computed on demand for display (the
+    ticker details panel) — nothing is stored. `df` needs a `date` column.
+    Each item: {date, name, label, direction, meaning}.
+    """
+    if len(df) < MIN_PATTERN_BARS or bars < 1:
+        return []
+    raw = _raw_outputs(df)
+    dates = [d.date().isoformat() if hasattr(d, "date") else str(d) for d in df["date"]]
+    start = max(0, len(df) - bars)
+    out = []
+    for v in PATTERN_VARIABLES:
+        hits = _fires(raw[v["fn"]], v["sign"])
+        for i in range(start, len(df)):
+            if hits[i]:
+                out.append({"date": dates[i], "name": v["name"], "label": v["label"],
+                            "direction": v["direction"], "meaning": v["meaning"]})
+    out.sort(key=lambda p: (p["date"], -_DIRECTION_ORDER[p["direction"]]), reverse=True)
+    return out
+
+
 def compute_patterns(df) -> dict[str, bool]:
     """
     Detect the curated patterns on a daily OHLC frame (columns Open/High/Low/
@@ -115,13 +147,9 @@ def compute_patterns(df) -> dict[str, bool]:
     """
     if len(df) < MIN_PATTERN_BARS:
         return {}
-    o, h, l, c = (df[col].to_numpy(dtype=np.float64) for col in ("Open", "High", "Low", "Close"))
-
-    raw: dict[str, np.ndarray] = {}
+    raw = _raw_outputs(df)
     fired: dict[str, bool] = {}
     for v in PATTERN_VARIABLES:
-        if v["fn"] not in raw:
-            raw[v["fn"]] = getattr(talib, v["fn"])(o, h, l, c)
         hits = _fires(raw[v["fn"]], v["sign"])
         if hits[-1]:
             fired[v["name"]] = True

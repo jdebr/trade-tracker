@@ -12,6 +12,7 @@ import { Field, NumberInput, Select, Textarea } from "@/components/ui/form"
 import { EXIT_REASONS } from "@/lib/exitMethods"
 import { useSort } from "@/lib/useSort"
 import { numberError } from "@/lib/validate"
+import { SymbolLink } from "@/components/SymbolLink"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -254,7 +255,7 @@ function OpenPositionCard({ position, quote, onClose }) {
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold tracking-wide">{position.symbol}</span>
+          <SymbolLink symbol={position.symbol} />
           <SimBadge isSimulated={position.is_simulated} />
           <span className="text-xs text-muted-foreground">
             {position.shares} sh · entered {fmtDate(position.entry_date)}
@@ -329,7 +330,7 @@ function ClosedTable({ positions }) {
             <tr key={p.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
               <td className="px-4 py-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold tracking-wide">{p.symbol}</span>
+                  <SymbolLink symbol={p.symbol} />
                   <SimBadge isSimulated={p.is_simulated} />
                 </div>
               </td>

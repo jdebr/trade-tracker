@@ -16,6 +16,7 @@ A personal assistant for finding and monitoring swing trades. It does **not** ex
 3. [Planning a Trade](#planning-a-trade)
 4. [Pages](#pages)
    - [How forms behave](#how-forms-behave)
+   - [Ticker details panel](#ticker-details-panel)
    - [Watchlist](#watchlist)
    - [Screener](#screener)
    - [Charts](#charts)
@@ -182,6 +183,21 @@ The same rules apply on every page:
 - **Number fields** have up/down buttons (hold to repeat) and respond to the ↑/↓ keys. The scroll wheel never changes a value by accident.
 - **Dropdowns** open in a floating list that's never cut off by a dialog, grows to fit long names, and closes on Esc without closing anything else.
 - **Nothing freezes while it saves.** Other rows, buttons and pages stay usable; the thing that's busy shows a small spinner. Toggling one signal, acknowledging one alert, or adding one ticker never blocks the others. The only exception is a dialog's final **Create / Save / Open / Close** click, which locks that dialog's fields for the moment it takes to commit.
+
+### Ticker details panel
+
+Click any **ticker symbol** (dotted underline) on the Watchlist, Screener, Positions or Alerts pages to slide out a details panel for it. Esc or ✕ closes it. It's computed fresh when you open it, from the same cached data the rest of the app uses; nothing extra is stored.
+
+| Section | What it shows |
+|---|---|
+| Header | Name, sector · industry, latest close with the day's change, and the date of that close. |
+| Actions | **Add to watchlist** (or an *In watchlist* tag) and **Full chart**, which opens the Charts page on this ticker. |
+| Recent candles | A ~3-month mini chart with markers on the bars where a pattern formed (▲ green = bullish, ▼ red = bearish, ● grey = indecision), and a day-by-day list of the patterns from the last 10 sessions, each with a one-line meaning. |
+| Open position | If you hold it: entry date and price, shares, stop, target, and where the trade stands now in **R**. |
+| Signals | The live score against your current active signals, with each signal marked ✓ fired or ✗ not, and its expression. |
+| Indicators | RSI, MACD histogram, BB squeeze, EMAs, ATR and how far the close is from the 50-day EMA, with the date of the data. Hover a name for how to read it. |
+
+The panel's pattern list is **for reading, not scoring**: it shows every curated pattern of the last 10 sessions, noise included (doji and spinning tops are common). Patterns only count toward a screener score if you build a signal that uses them.
 
 ### Watchlist
 

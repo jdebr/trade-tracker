@@ -34,7 +34,7 @@ BB_SQUEEZE_WINDOW = 252
 BB_SQUEEZE_PERCENTILE = 20
 
 
-def _to_dataframe(bars: list[dict]) -> pd.DataFrame:
+def bars_to_dataframe(bars: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(bars)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
@@ -78,7 +78,7 @@ def compute_indicators(symbol: str) -> dict | None:
         )
         return None
 
-    df = _to_dataframe(bars)
+    df = bars_to_dataframe(bars)
 
     # --- RSI(14) ---
     df.ta.rsi(length=14, append=True)

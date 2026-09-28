@@ -163,6 +163,11 @@ def build_feature_context(symbol: str) -> dict:
     return _assemble(snapshot, bars)
 
 
+def features_from(snapshot: dict | None, bars: list[dict]) -> dict:
+    """Feature dict from an already-loaded snapshot + bars (oldest→newest), no queries."""
+    return _assemble(snapshot or {}, bars)
+
+
 def features_from_context(ctx) -> dict:
     """
     Build the feature dict from an already-loaded MarketContext (exit_strategy),

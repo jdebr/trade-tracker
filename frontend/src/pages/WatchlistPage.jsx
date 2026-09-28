@@ -12,6 +12,7 @@ import { SortHeader } from "@/components/ui/SortHeader"
 import ExitPlanDialog from "@/components/ExitPlanDialog"
 import { ScoreBadge, ActiveSignalsTip, FiredSignalsTip } from "@/components/SignalScore"
 import { PatternChips } from "@/components/PatternChips"
+import { SymbolLink } from "@/components/SymbolLink"
 import { useRuleVariables } from "@/lib/useRuleVariables"
 import { INDICATORS } from "@/lib/indicators"
 import { useSort } from "@/lib/useSort"
@@ -331,9 +332,7 @@ function WatchlistTable({ rows, nameMap, openSymbols, activeRules, variables, so
             <tr key={row.symbol} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
               <td className="px-4 py-3">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Tooltip content={nameMap.get(row.symbol)}>
-                    <span className="font-semibold tracking-wide cursor-default">{row.symbol}</span>
-                  </Tooltip>
+                  <SymbolLink symbol={row.symbol} name={nameMap.get(row.symbol)} />
                   {row.group_name && (
                     <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium", groupColour(row.group_name))}>
                       {row.group_name}
@@ -374,9 +373,7 @@ function WatchlistCards({ rows, nameMap, openSymbols, activeRules, variables, on
         <div key={row.symbol} className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between mb-3 gap-2">
             <div className="flex items-center gap-2 flex-wrap min-w-0">
-              <Tooltip content={nameMap.get(row.symbol)}>
-                <span className="font-semibold tracking-wide cursor-default">{row.symbol}</span>
-              </Tooltip>
+              <SymbolLink symbol={row.symbol} name={nameMap.get(row.symbol)} />
               {row.group_name && (
                 <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium", groupColour(row.group_name))}>
                   {row.group_name}

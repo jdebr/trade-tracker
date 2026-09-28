@@ -10,6 +10,9 @@
  *   chartType   – "candlestick" | "line"
  *   showBB      – bool
  *   showEMAs    – bool
+ *   markers     – optional [{ time, position, shape, color, text? }] on the main
+ *                 series (e.g. candlestick patterns); sorted oldest → newest
+ *   interactive – false for a static preview (no scroll/zoom), default true
  */
 
 import { useEffect, useRef, useState } from "react"
@@ -18,6 +21,7 @@ import {
   CandlestickSeries,
   LineSeries,
   ColorType,
+  createSeriesMarkers,
 } from "lightweight-charts"
 
 const COLOURS = {
@@ -34,10 +38,14 @@ function toTime(dateStr) {
   return dateStr
 }
 
-export default function Chart({ bars = [], overlays = [], chartType = "candlestick", showBB = true, showEMAs = true }) {
+export default function Chart({
+  bars = [], overlays = [], chartType = "candlestick", showBB = true, showEMAs = true,
+  markers, interactive = true,
+}) {
   const containerRef = useRef(null)
   const chartRef     = useRef(null)
   const seriesRef    = useRef(null)
+  const markersRef   = useRef(null)
   const overlayRefs  = useRef([])
   const [chartKey,   setChartKey] = useState(0)
 
@@ -61,8 +69,8 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
         timeVisible: true,
         secondsVisible: false,
       },
-      handleScroll: true,
-      handleScale: true,
+      handleScroll: interactive,
+      handleScale: interactive,
     })
 
     chartRef.current = chart
@@ -79,8 +87,11 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
       chart.remove()
       chartRef.current  = null
       seriesRef.current = null
+      markersRef.current = null
       overlayRefs.current = []
     }
+    // Created once; `interactive` is fixed for a chart's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Recreate main series when chartType changes
@@ -92,6 +103,7 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
     if (seriesRef.current) {
       chart.removeSeries(seriesRef.current)
     }
+    markersRef.current = null   // markers belong to the series being replaced
 
     const series =
       chartType === "candlestick"
@@ -124,6 +136,14 @@ export default function Chart({ bars = [], overlays = [], chartType = "candlesti
     series.setData(data)
     chartRef.current?.timeScale().fitContent()
   }, [bars, chartType])
+
+  // Markers on the main series (only when the caller passes them)
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series || !markers) return
+    if (!markersRef.current) markersRef.current = createSeriesMarkers(series, [])
+    markersRef.current.setMarkers(markers)
+  }, [markers, bars, chartType])
 
   // Rebuild overlay series when overlays or visibility flags change
   useEffect(() => {
